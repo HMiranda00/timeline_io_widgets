@@ -341,7 +341,7 @@ def region_x_to_frame(context, x):
 HEADER_HEIGHT = 18  # Height of timeline header (constant)
 
 
-def generate_arc_vertices(cx, cy, radius, start_angle, end_angle, segments=8):
+def generate_arc_vertices(cx, cy, radius, start_angle, end_angle, segments=6):
     """Generate vertices for an arc"""
     vertices = []
     for i in range(segments + 1):
@@ -351,224 +351,6 @@ def generate_arc_vertices(cx, cy, radius, start_angle, end_angle, segments=8):
         vy = cy + radius * math.sin(angle)
         vertices.append((vx, vy))
     return vertices
-
-
-def generate_bracket_vertices(x, y, width, height, thickness, radius, is_left=True, segments=8):
-    """
-    Generate vertices for a bracket shape "[" or "]" as a single continuous form.
-    With high radius, the bracket becomes a "C" shape.
-    
-    For "[" bracket (is_left=True):
-    - x, y is the inner corner position
-    - Arms extend to the right
-    - The vertical bar is on the left
-    
-    For "]" bracket (is_left=False):
-    - x, y is the inner corner position  
-    - Arms extend to the left
-    - The vertical bar is on the right
-    """
-    vertices = []
-    
-    # Clamp radius to reasonable values
-    max_radius = min(height / 2, width, thickness * 2)
-    radius = min(radius, max_radius)
-    
-    if is_left:
-        # "[" bracket - vertical bar on left, arms extend right
-        # Outer edge (left side of vertical bar)
-        outer_x = x - thickness
-        inner_x = x
-        arm_end_x = x + width - thickness
-        
-        bottom_y = y
-        top_y = y + height
-        
-        # Start from bottom-left outer corner, go clockwise
-        
-        # Bottom-left outer corner (can be rounded)
-        if radius > 0:
-            arc = generate_arc_vertices(outer_x + radius, bottom_y + radius, 
-                                        radius, math.pi, 1.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((outer_x, bottom_y))
-        
-        # Bottom arm - outer edge (bottom of bottom arm)
-        vertices.append((arm_end_x, bottom_y))
-        
-        # Bottom arm - right end (can be rounded)
-        if radius > 0:
-            arc = generate_arc_vertices(arm_end_x, bottom_y + thickness - radius,
-                                        radius, -0.5 * math.pi, 0, segments)
-            vertices.extend(arc)
-            arc = generate_arc_vertices(arm_end_x, bottom_y + thickness - radius,
-                                        radius, 0, 0.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((arm_end_x + thickness, bottom_y))
-            vertices.append((arm_end_x + thickness, bottom_y + thickness))
-        
-        # Bottom arm - inner edge (top of bottom arm)
-        vertices.append((arm_end_x, bottom_y + thickness))
-        
-        # Inner corner - bottom (the curve that can make it a "C")
-        if radius > 0:
-            arc = generate_arc_vertices(inner_x + radius, bottom_y + thickness + radius,
-                                        radius, 1.5 * math.pi, math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((inner_x, bottom_y + thickness))
-        
-        # Inner vertical edge
-        inner_bottom = bottom_y + thickness + radius
-        inner_top = top_y - thickness - radius
-        
-        if inner_top > inner_bottom:
-            vertices.append((inner_x, inner_top))
-        
-        # Inner corner - top (the curve that can make it a "C")
-        if radius > 0:
-            arc = generate_arc_vertices(inner_x + radius, top_y - thickness - radius,
-                                        radius, math.pi, 0.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((inner_x, top_y - thickness))
-        
-        # Top arm - inner edge (bottom of top arm)
-        vertices.append((arm_end_x, top_y - thickness))
-        
-        # Top arm - right end (can be rounded)
-        if radius > 0:
-            arc = generate_arc_vertices(arm_end_x, top_y - thickness + radius,
-                                        radius, -0.5 * math.pi, 0, segments)
-            vertices.extend(arc)
-            arc = generate_arc_vertices(arm_end_x, top_y - thickness + radius,
-                                        radius, 0, 0.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((arm_end_x + thickness, top_y - thickness))
-            vertices.append((arm_end_x + thickness, top_y))
-        
-        # Top arm - outer edge (top of top arm)
-        vertices.append((arm_end_x, top_y))
-        
-        # Top-left outer corner (can be rounded)
-        if radius > 0:
-            arc = generate_arc_vertices(outer_x + radius, top_y - radius,
-                                        radius, 0.5 * math.pi, math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((outer_x, top_y))
-        
-        # Back to start (left edge)
-        # vertices.append((outer_x, bottom_y))  # Close the loop
-        
-    else:
-        # "]" bracket - vertical bar on right, arms extend left
-        outer_x = x + thickness
-        inner_x = x
-        arm_end_x = x - width + thickness
-        
-        bottom_y = y
-        top_y = y + height
-        
-        # Start from bottom-right outer corner, go counter-clockwise
-        
-        # Bottom-right outer corner
-        if radius > 0:
-            arc = generate_arc_vertices(outer_x - radius, bottom_y + radius,
-                                        radius, 1.5 * math.pi, 2 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((outer_x, bottom_y))
-        
-        # Right edge going up
-        if radius > 0:
-            arc = generate_arc_vertices(outer_x - radius, top_y - radius,
-                                        radius, 0, 0.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((outer_x, top_y))
-        
-        # Top arm - outer edge
-        vertices.append((arm_end_x, top_y))
-        
-        # Top arm - left end
-        if radius > 0:
-            arc = generate_arc_vertices(arm_end_x, top_y - thickness + radius,
-                                        radius, 0.5 * math.pi, math.pi, segments)
-            vertices.extend(arc)
-            arc = generate_arc_vertices(arm_end_x, top_y - thickness + radius,
-                                        radius, math.pi, 1.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((arm_end_x - thickness, top_y))
-            vertices.append((arm_end_x - thickness, top_y - thickness))
-        
-        # Top arm - inner edge
-        vertices.append((arm_end_x, top_y - thickness))
-        
-        # Inner corner - top
-        if radius > 0:
-            arc = generate_arc_vertices(inner_x - radius, top_y - thickness - radius,
-                                        radius, 0.5 * math.pi, 0, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((inner_x, top_y - thickness))
-        
-        # Inner vertical edge
-        inner_top = top_y - thickness - radius
-        inner_bottom = bottom_y + thickness + radius
-        
-        if inner_top > inner_bottom:
-            vertices.append((inner_x, inner_bottom))
-        
-        # Inner corner - bottom
-        if radius > 0:
-            arc = generate_arc_vertices(inner_x - radius, bottom_y + thickness + radius,
-                                        radius, 0, -0.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((inner_x, bottom_y + thickness))
-        
-        # Bottom arm - inner edge
-        vertices.append((arm_end_x, bottom_y + thickness))
-        
-        # Bottom arm - left end
-        if radius > 0:
-            arc = generate_arc_vertices(arm_end_x, bottom_y + thickness - radius,
-                                        radius, 0.5 * math.pi, math.pi, segments)
-            vertices.extend(arc)
-            arc = generate_arc_vertices(arm_end_x, bottom_y + thickness - radius,
-                                        radius, math.pi, 1.5 * math.pi, segments)
-            vertices.extend(arc)
-        else:
-            vertices.append((arm_end_x - thickness, bottom_y + thickness))
-            vertices.append((arm_end_x - thickness, bottom_y))
-        
-        # Bottom arm - outer edge
-        vertices.append((arm_end_x, bottom_y))
-    
-    # Generate indices using triangle fan from centroid
-    if len(vertices) < 3:
-        return [], []
-    
-    # Calculate centroid
-    cx = sum(v[0] for v in vertices) / len(vertices)
-    cy = sum(v[1] for v in vertices) / len(vertices)
-    
-    # Insert centroid at beginning
-    vertices.insert(0, (cx, cy))
-    
-    # Create triangle fan
-    indices = []
-    num_verts = len(vertices)
-    for i in range(1, num_verts - 1):
-        indices.append((0, i, i + 1))
-    indices.append((0, num_verts - 1, 1))
-    
-    return vertices, indices
 
 
 def draw_rect(shader, x, y, width, height, color):
@@ -586,14 +368,156 @@ def draw_rect(shader, x, y, width, height, color):
     batch.draw(shader)
 
 
-def draw_bracket(shader, x, y, width, height, thickness, color, radius=0, is_left=True):
-    """Draw a bracket shape with optional rounded corners"""
-    vertices, indices = generate_bracket_vertices(x, y, width, height, thickness, radius, is_left)
+def draw_rounded_corner(shader, cx, cy, radius, start_angle, end_angle, color, segments=6):
+    """Draw a filled quarter circle / arc segment"""
+    if radius <= 0:
+        return
     
-    if vertices and indices:
-        batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
-        shader.uniform_float("color", color)
-        batch.draw(shader)
+    vertices = [(cx, cy)]  # Center point
+    
+    for i in range(segments + 1):
+        t = i / segments
+        angle = start_angle + t * (end_angle - start_angle)
+        vx = cx + radius * math.cos(angle)
+        vy = cy + radius * math.sin(angle)
+        vertices.append((vx, vy))
+    
+    indices = []
+    for i in range(1, len(vertices) - 1):
+        indices.append((0, i, i + 1))
+    
+    batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
+    shader.uniform_float("color", color)
+    batch.draw(shader)
+
+
+def draw_bracket(shader, x, y, width, height, thickness, color, radius=0, is_left=True):
+    """
+    Draw a bracket shape "[" or "]" using multiple rectangles with rounded corners.
+    
+    For "[" (is_left=True): x is the inner edge, bracket extends left for thickness
+    For "]" (is_left=False): x is the inner edge, bracket extends right for thickness
+    """
+    # Clamp radius
+    max_radius = min(height / 2 - thickness, width - thickness, thickness * 3)
+    radius = max(0, min(radius, max_radius))
+    
+    if is_left:
+        # "[" bracket
+        # Vertical bar on the left
+        bar_x = x - thickness
+        bar_y = y
+        bar_w = thickness
+        bar_h = height
+        
+        # Arms extend to the right from x
+        arm_w = width - thickness
+        arm_h = thickness
+        
+        # Bottom arm
+        bottom_arm_x = x
+        bottom_arm_y = y
+        
+        # Top arm
+        top_arm_x = x
+        top_arm_y = y + height - thickness
+        
+        if radius > 0:
+            # Draw vertical bar (shortened to make room for curves)
+            draw_rect(shader, bar_x, y + radius, bar_w, height - radius * 2, color)
+            
+            # Draw arms (shortened to make room for curves)
+            draw_rect(shader, x + radius, bottom_arm_y, arm_w - radius, arm_h, color)
+            draw_rect(shader, x + radius, top_arm_y, arm_w - radius, arm_h, color)
+            
+            # Inner corners (concave - these connect bar to arms)
+            # Bottom inner corner - fills the gap
+            draw_rect(shader, x, y + thickness, radius, radius, color)
+            draw_rounded_corner(shader, x + radius, y + thickness + radius, radius,
+                               math.pi, 1.5 * math.pi, color)
+            
+            # Top inner corner - fills the gap  
+            draw_rect(shader, x, y + height - thickness - radius, radius, radius, color)
+            draw_rounded_corner(shader, x + radius, y + height - thickness - radius, radius,
+                               0.5 * math.pi, math.pi, color)
+            
+            # Outer corners of vertical bar
+            draw_rounded_corner(shader, bar_x + radius, y + radius, radius,
+                               math.pi, 1.5 * math.pi, color)
+            draw_rounded_corner(shader, bar_x + radius, y + height - radius, radius,
+                               0.5 * math.pi, math.pi, color)
+            
+            # Fill between outer corners and bar
+            draw_rect(shader, bar_x, y + radius, radius, height - radius * 2, color)
+            
+            # Outer corners of arms (the tips)
+            draw_rounded_corner(shader, x + arm_w - radius, y + radius, radius,
+                               1.5 * math.pi, 2 * math.pi, color)
+            draw_rounded_corner(shader, x + arm_w - radius, y + height - radius, radius,
+                               0, 0.5 * math.pi, color)
+            
+            # Fill arm tips
+            draw_rect(shader, x + arm_w - radius, y, radius, thickness, color)
+            draw_rect(shader, x + arm_w - radius, y + height - thickness, radius, thickness, color)
+            
+        else:
+            # No rounding - simple rectangles
+            draw_rect(shader, bar_x, bar_y, bar_w, bar_h, color)
+            draw_rect(shader, bottom_arm_x, bottom_arm_y, arm_w, arm_h, color)
+            draw_rect(shader, top_arm_x, top_arm_y, arm_w, arm_h, color)
+    
+    else:
+        # "]" bracket (mirror of "[")
+        bar_x = x
+        bar_y = y
+        bar_w = thickness
+        bar_h = height
+        
+        arm_w = width - thickness
+        arm_h = thickness
+        
+        bottom_arm_x = x - arm_w
+        top_arm_x = x - arm_w
+        top_arm_y = y + height - thickness
+        
+        if radius > 0:
+            # Draw vertical bar (shortened)
+            draw_rect(shader, bar_x, y + radius, bar_w, height - radius * 2, color)
+            
+            # Draw arms (shortened)
+            draw_rect(shader, x - arm_w, y, arm_w - radius, arm_h, color)
+            draw_rect(shader, x - arm_w, top_arm_y, arm_w - radius, arm_h, color)
+            
+            # Inner corners
+            draw_rect(shader, x - radius, y + thickness, radius, radius, color)
+            draw_rounded_corner(shader, x - radius, y + thickness + radius, radius,
+                               1.5 * math.pi, 2 * math.pi, color)
+            
+            draw_rect(shader, x - radius, y + height - thickness - radius, radius, radius, color)
+            draw_rounded_corner(shader, x - radius, y + height - thickness - radius, radius,
+                               0, 0.5 * math.pi, color)
+            
+            # Outer corners of vertical bar
+            draw_rounded_corner(shader, x + thickness - radius, y + radius, radius,
+                               1.5 * math.pi, 2 * math.pi, color)
+            draw_rounded_corner(shader, x + thickness - radius, y + height - radius, radius,
+                               0, 0.5 * math.pi, color)
+            
+            draw_rect(shader, x, y + radius, radius, height - radius * 2, color)
+            
+            # Outer corners of arms
+            draw_rounded_corner(shader, x - arm_w + radius, y + radius, radius,
+                               math.pi, 1.5 * math.pi, color)
+            draw_rounded_corner(shader, x - arm_w + radius, y + height - radius, radius,
+                               0.5 * math.pi, math.pi, color)
+            
+            draw_rect(shader, x - arm_w, y, radius, thickness, color)
+            draw_rect(shader, x - arm_w, y + height - thickness, radius, thickness, color)
+            
+        else:
+            draw_rect(shader, bar_x, bar_y, bar_w, bar_h, color)
+            draw_rect(shader, bottom_arm_x, y, arm_w, arm_h, color)
+            draw_rect(shader, top_arm_x, top_arm_y, arm_w, arm_h, color)
 
 
 def draw_handle(shader, x, region_height, color, settings, is_in_handle=True):
