@@ -103,18 +103,6 @@ class TimelineIOEditorSettings(bpy.types.PropertyGroup):
         default=1, min=1, max=5
     )
     
-    # Round corners
-    use_round_corners: bpy.props.BoolProperty(
-        name="Round Corners",
-        description="Use rounded corners on brackets (high radius creates C-shape)",
-        default=False
-    )
-    corner_radius: bpy.props.IntProperty(
-        name="Corner Radius",
-        description="Radius of rounded corners - high values create C-shaped brackets",
-        default=3, min=1, max=50
-    )
-    
     # Colors
     in_color: bpy.props.FloatVectorProperty(
         name="In Point Color",
@@ -190,18 +178,6 @@ class TimelineIOPreferences(bpy.types.AddonPreferences):
         default=1, min=1, max=5
     )
     
-    # Round corners
-    use_round_corners: bpy.props.BoolProperty(
-        name="Round Corners",
-        description="Use rounded corners on brackets (high radius creates C-shape)",
-        default=False
-    )
-    corner_radius: bpy.props.IntProperty(
-        name="Corner Radius",
-        description="Radius of rounded corners - high values create C-shaped brackets",
-        default=3, min=1, max=50
-    )
-    
     # Colors
     in_color: bpy.props.FloatVectorProperty(
         name="In Point Color",
@@ -259,14 +235,6 @@ class TimelineIOPreferences(bpy.types.AddonPreferences):
         row.prop(self, "bracket_thickness")
         row.prop(self, "line_thickness")
         
-        # Round corners
-        box.separator()
-        row = box.row()
-        row.prop(self, "use_round_corners")
-        sub = row.row()
-        sub.enabled = self.use_round_corners
-        sub.prop(self, "corner_radius")
-        
         # Colors
         box.separator()
         box.label(text="Colors:")
@@ -303,12 +271,6 @@ class TimelineIOPreferences(bpy.types.AddonPreferences):
             row.prop(settings, "line_thickness")
             
             row = col.row()
-            row.prop(settings, "use_round_corners")
-            sub = row.row()
-            sub.enabled = settings.use_round_corners
-            sub.prop(settings, "corner_radius")
-            
-            row = col.row()
             row.prop(settings, "in_color", text="In")
             row.prop(settings, "out_color", text="Out")
             col.prop(settings, "range_color", text="Range")
@@ -339,18 +301,7 @@ def region_x_to_frame(context, x):
 # -----------------------------------------------------------------------------
 
 HEADER_HEIGHT = 18  # Height of timeline header (constant)
-
-
-def generate_arc_vertices(cx, cy, radius, start_angle, end_angle, segments=6):
-    """Generate vertices for an arc"""
-    vertices = []
-    for i in range(segments + 1):
-        t = i / segments
-        angle = start_angle + t * (end_angle - start_angle)
-        vx = cx + radius * math.cos(angle)
-        vy = cy + radius * math.sin(angle)
-        vertices.append((vx, vy))
-    return vertices
+CORNER_RADIUS = 4   # Fixed corner radius matching Blender UI style
 
 
 def draw_rect(shader, x, y, width, height, color):
@@ -368,156 +319,82 @@ def draw_rect(shader, x, y, width, height, color):
     batch.draw(shader)
 
 
-def draw_rounded_corner(shader, cx, cy, radius, start_angle, end_angle, color, segments=6):
-    """Draw a filled quarter circle / arc segment"""
-    if radius <= 0:
+def draw_rounded_rect(shader, x, y, width, height, color, radius=CORNER_RADIUS, segments=4):
+    """Draw a filled rectangle with rounded corners (Blender UI style)"""
+    # Clamp radius to fit
+    radius = min(radius, width / 2, height / 2)
+    
+    if radius <= 1:
+        draw_rect(shader, x, y, width, height, color)
         return
     
-    vertices = [(cx, cy)]  # Center point
+    vertices = []
     
-    for i in range(segments + 1):
-        t = i / segments
-        angle = start_angle + t * (end_angle - start_angle)
-        vx = cx + radius * math.cos(angle)
-        vy = cy + radius * math.sin(angle)
-        vertices.append((vx, vy))
+    # Generate corner arcs
+    corners = [
+        (x + radius, y + radius, math.pi, 1.5 * math.pi),           # bottom-left
+        (x + width - radius, y + radius, 1.5 * math.pi, 2 * math.pi),  # bottom-right
+        (x + width - radius, y + height - radius, 0, 0.5 * math.pi),   # top-right
+        (x + radius, y + height - radius, 0.5 * math.pi, math.pi),     # top-left
+    ]
+    
+    for cx, cy, start_angle, end_angle in corners:
+        for i in range(segments + 1):
+            t = i / segments
+            angle = start_angle + t * (end_angle - start_angle)
+            vx = cx + radius * math.cos(angle)
+            vy = cy + radius * math.sin(angle)
+            vertices.append((vx, vy))
+    
+    # Triangle fan from center
+    center = (x + width / 2, y + height / 2)
+    vertices.insert(0, center)
     
     indices = []
-    for i in range(1, len(vertices) - 1):
+    num_verts = len(vertices)
+    for i in range(1, num_verts - 1):
         indices.append((0, i, i + 1))
+    indices.append((0, num_verts - 1, 1))
     
     batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
     shader.uniform_float("color", color)
     batch.draw(shader)
 
 
-def draw_bracket(shader, x, y, width, height, thickness, color, radius=0, is_left=True):
+def draw_bracket(shader, x, y, width, height, thickness, color, is_left=True):
     """
-    Draw a bracket shape "[" or "]" using multiple rectangles with rounded corners.
+    Draw a bracket shape "[" or "]" using simple rectangles.
+    Uses fixed corner radius matching Blender's UI.
     
     For "[" (is_left=True): x is the inner edge, bracket extends left for thickness
     For "]" (is_left=False): x is the inner edge, bracket extends right for thickness
     """
-    # Clamp radius
-    max_radius = min(height / 2 - thickness, width - thickness, thickness * 3)
-    radius = max(0, min(radius, max_radius))
-    
     if is_left:
-        # "[" bracket
-        # Vertical bar on the left
+        # "[" bracket - vertical bar on left, arms extend right
         bar_x = x - thickness
-        bar_y = y
-        bar_w = thickness
-        bar_h = height
-        
-        # Arms extend to the right from x
         arm_w = width - thickness
-        arm_h = thickness
+        
+        # Vertical bar
+        draw_rounded_rect(shader, bar_x, y, thickness, height, color, radius=min(CORNER_RADIUS, thickness/2))
         
         # Bottom arm
-        bottom_arm_x = x
-        bottom_arm_y = y
+        draw_rounded_rect(shader, x, y, arm_w, thickness, color, radius=min(CORNER_RADIUS, thickness/2))
         
         # Top arm
-        top_arm_x = x
-        top_arm_y = y + height - thickness
-        
-        if radius > 0:
-            # Draw vertical bar (shortened to make room for curves)
-            draw_rect(shader, bar_x, y + radius, bar_w, height - radius * 2, color)
-            
-            # Draw arms (shortened to make room for curves)
-            draw_rect(shader, x + radius, bottom_arm_y, arm_w - radius, arm_h, color)
-            draw_rect(shader, x + radius, top_arm_y, arm_w - radius, arm_h, color)
-            
-            # Inner corners (concave - these connect bar to arms)
-            # Bottom inner corner - fills the gap
-            draw_rect(shader, x, y + thickness, radius, radius, color)
-            draw_rounded_corner(shader, x + radius, y + thickness + radius, radius,
-                               math.pi, 1.5 * math.pi, color)
-            
-            # Top inner corner - fills the gap  
-            draw_rect(shader, x, y + height - thickness - radius, radius, radius, color)
-            draw_rounded_corner(shader, x + radius, y + height - thickness - radius, radius,
-                               0.5 * math.pi, math.pi, color)
-            
-            # Outer corners of vertical bar
-            draw_rounded_corner(shader, bar_x + radius, y + radius, radius,
-                               math.pi, 1.5 * math.pi, color)
-            draw_rounded_corner(shader, bar_x + radius, y + height - radius, radius,
-                               0.5 * math.pi, math.pi, color)
-            
-            # Fill between outer corners and bar
-            draw_rect(shader, bar_x, y + radius, radius, height - radius * 2, color)
-            
-            # Outer corners of arms (the tips)
-            draw_rounded_corner(shader, x + arm_w - radius, y + radius, radius,
-                               1.5 * math.pi, 2 * math.pi, color)
-            draw_rounded_corner(shader, x + arm_w - radius, y + height - radius, radius,
-                               0, 0.5 * math.pi, color)
-            
-            # Fill arm tips
-            draw_rect(shader, x + arm_w - radius, y, radius, thickness, color)
-            draw_rect(shader, x + arm_w - radius, y + height - thickness, radius, thickness, color)
-            
-        else:
-            # No rounding - simple rectangles
-            draw_rect(shader, bar_x, bar_y, bar_w, bar_h, color)
-            draw_rect(shader, bottom_arm_x, bottom_arm_y, arm_w, arm_h, color)
-            draw_rect(shader, top_arm_x, top_arm_y, arm_w, arm_h, color)
+        draw_rounded_rect(shader, x, y + height - thickness, arm_w, thickness, color, radius=min(CORNER_RADIUS, thickness/2))
     
     else:
-        # "]" bracket (mirror of "[")
-        bar_x = x
-        bar_y = y
-        bar_w = thickness
-        bar_h = height
-        
+        # "]" bracket - vertical bar on right, arms extend left
         arm_w = width - thickness
-        arm_h = thickness
         
-        bottom_arm_x = x - arm_w
-        top_arm_x = x - arm_w
-        top_arm_y = y + height - thickness
+        # Vertical bar
+        draw_rounded_rect(shader, x, y, thickness, height, color, radius=min(CORNER_RADIUS, thickness/2))
         
-        if radius > 0:
-            # Draw vertical bar (shortened)
-            draw_rect(shader, bar_x, y + radius, bar_w, height - radius * 2, color)
-            
-            # Draw arms (shortened)
-            draw_rect(shader, x - arm_w, y, arm_w - radius, arm_h, color)
-            draw_rect(shader, x - arm_w, top_arm_y, arm_w - radius, arm_h, color)
-            
-            # Inner corners
-            draw_rect(shader, x - radius, y + thickness, radius, radius, color)
-            draw_rounded_corner(shader, x - radius, y + thickness + radius, radius,
-                               1.5 * math.pi, 2 * math.pi, color)
-            
-            draw_rect(shader, x - radius, y + height - thickness - radius, radius, radius, color)
-            draw_rounded_corner(shader, x - radius, y + height - thickness - radius, radius,
-                               0, 0.5 * math.pi, color)
-            
-            # Outer corners of vertical bar
-            draw_rounded_corner(shader, x + thickness - radius, y + radius, radius,
-                               1.5 * math.pi, 2 * math.pi, color)
-            draw_rounded_corner(shader, x + thickness - radius, y + height - radius, radius,
-                               0, 0.5 * math.pi, color)
-            
-            draw_rect(shader, x, y + radius, radius, height - radius * 2, color)
-            
-            # Outer corners of arms
-            draw_rounded_corner(shader, x - arm_w + radius, y + radius, radius,
-                               math.pi, 1.5 * math.pi, color)
-            draw_rounded_corner(shader, x - arm_w + radius, y + height - radius, radius,
-                               0.5 * math.pi, math.pi, color)
-            
-            draw_rect(shader, x - arm_w, y, radius, thickness, color)
-            draw_rect(shader, x - arm_w, y + height - thickness, radius, thickness, color)
-            
-        else:
-            draw_rect(shader, bar_x, bar_y, bar_w, bar_h, color)
-            draw_rect(shader, bottom_arm_x, y, arm_w, arm_h, color)
-            draw_rect(shader, top_arm_x, top_arm_y, arm_w, arm_h, color)
+        # Bottom arm
+        draw_rounded_rect(shader, x - arm_w, y, arm_w, thickness, color, radius=min(CORNER_RADIUS, thickness/2))
+        
+        # Top arm
+        draw_rounded_rect(shader, x - arm_w, y + height - thickness, arm_w, thickness, color, radius=min(CORNER_RADIUS, thickness/2))
 
 
 def draw_handle(shader, x, region_height, color, settings, is_in_handle=True):
@@ -528,13 +405,9 @@ def draw_handle(shader, x, region_height, color, settings, is_in_handle=True):
     arm_len = settings.bracket_arm_length
     half_line = line_w / 2
     
-    use_rounded = settings.use_round_corners
-    radius = settings.corner_radius if use_rounded else 0
-    
     # Determine bracket position
     if settings.bracket_position == 'TOP':
         header_bottom = region_height - HEADER_HEIGHT
-        bracket_top = header_bottom
         bracket_bottom = header_bottom - bracket_h
         line_bottom = 0
         line_top = bracket_bottom
@@ -552,53 +425,13 @@ def draw_handle(shader, x, region_height, color, settings, is_in_handle=True):
     # 2. Draw main vertical line
     draw_rect(shader, x - half_line, line_bottom, line_w, line_top - line_bottom, color)
     
-    # 3. Draw bracket as a single unified shape
+    # 3. Draw bracket
     if is_in_handle:
-        # "[" bracket - positioned so inner edge is at x
-        bracket_x = x  # Inner edge position
-        draw_bracket(shader, bracket_x, bracket_bottom, arm_len + bracket_w, bracket_h, 
-                    bracket_w, color, radius, is_left=True)
+        draw_bracket(shader, x, bracket_bottom, arm_len + bracket_w, bracket_h, 
+                    bracket_w, color, is_left=True)
     else:
-        # "]" bracket - positioned so inner edge is at x
-        bracket_x = x  # Inner edge position
-        draw_bracket(shader, bracket_x, bracket_bottom, arm_len + bracket_w, bracket_h,
-                    bracket_w, color, radius, is_left=False)
-
-
-def draw_rounded_rect(shader, x, y, width, height, color, radius=0, segments=6):
-    """Draw a filled rectangle with optional rounded corners"""
-    if radius <= 0 or radius * 2 > min(width, height):
-        draw_rect(shader, x, y, width, height, color)
-        return
-    
-    vertices = []
-    
-    # Generate corners
-    corners = [
-        (x + radius, y + radius, math.pi, 1.5 * math.pi),
-        (x + width - radius, y + radius, 1.5 * math.pi, 2 * math.pi),
-        (x + width - radius, y + height - radius, 0, 0.5 * math.pi),
-        (x + radius, y + height - radius, 0.5 * math.pi, math.pi),
-    ]
-    
-    for cx, cy, start_angle, end_angle in corners:
-        arc = generate_arc_vertices(cx, cy, radius, start_angle, end_angle, segments)
-        vertices.extend(arc)
-    
-    # Triangle fan from center
-    cx = x + width / 2
-    cy = y + height / 2
-    vertices.insert(0, (cx, cy))
-    
-    indices = []
-    num_verts = len(vertices)
-    for i in range(1, num_verts - 1):
-        indices.append((0, i, i + 1))
-    indices.append((0, num_verts - 1, 1))
-    
-    batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
-    shader.uniform_float("color", color)
-    batch.draw(shader)
+        draw_bracket(shader, x, bracket_bottom, arm_len + bracket_w, bracket_h,
+                    bracket_w, color, is_left=False)
 
 
 def draw_range_overlay(shader, in_x, out_x, region_height, color, settings):
@@ -616,16 +449,13 @@ def draw_range_overlay(shader, in_x, out_x, region_height, color, settings):
         bracket_bottom = 0
     
     padding = bracket_w
-    use_rounded = settings.use_round_corners
-    radius = settings.corner_radius if use_rounded else 0
     
     draw_rounded_rect(shader,
                       in_x + padding,
                       bracket_bottom + padding,
                       out_x - in_x - padding * 2,
                       bracket_h - padding * 2,
-                      color,
-                      radius=radius)
+                      color)
 
 
 def draw_label(x, y, text):
