@@ -20,10 +20,16 @@ class TimelineWidgetState:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance.draw_handlers = {}
+            # Frame range handles
             cls._instance.is_dragging_in = False
             cls._instance.is_dragging_out = False
             cls._instance.hover_in = False
             cls._instance.hover_out = False
+            # Preview range handles
+            cls._instance.is_dragging_preview_in = False
+            cls._instance.is_dragging_preview_out = False
+            cls._instance.hover_preview_in = False
+            cls._instance.hover_preview_out = False
             cls._instance.enabled = True
         return cls._instance
 
@@ -103,7 +109,7 @@ class TimelineIOEditorSettings(bpy.types.PropertyGroup):
         default=1, min=1, max=5
     )
     
-    # Colors
+    # Colors - Frame Range
     in_color: bpy.props.FloatVectorProperty(
         name="In Point Color",
         subtype='COLOR_GAMMA',
@@ -123,6 +129,29 @@ class TimelineIOEditorSettings(bpy.types.PropertyGroup):
         subtype='COLOR_GAMMA',
         size=4,
         default=(0.4, 0.55, 0.8, 0.15),
+        min=0.0, max=1.0
+    )
+    
+    # Colors - Preview Range (purple/orange like Blender)
+    preview_in_color: bpy.props.FloatVectorProperty(
+        name="Preview In Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.6, 0.3, 0.9, 0.9),  # Purple
+        min=0.0, max=1.0
+    )
+    preview_out_color: bpy.props.FloatVectorProperty(
+        name="Preview Out Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(1.0, 0.5, 0.1, 0.9),  # Orange
+        min=0.0, max=1.0
+    )
+    preview_range_color: bpy.props.FloatVectorProperty(
+        name="Preview Range Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.6, 0.4, 0.8, 0.1),  # Light purple
         min=0.0, max=1.0
     )
 
@@ -178,7 +207,7 @@ class TimelineIOPreferences(bpy.types.AddonPreferences):
         default=1, min=1, max=5
     )
     
-    # Colors
+    # Colors - Frame Range
     in_color: bpy.props.FloatVectorProperty(
         name="In Point Color",
         subtype='COLOR_GAMMA',
@@ -198,6 +227,29 @@ class TimelineIOPreferences(bpy.types.AddonPreferences):
         subtype='COLOR_GAMMA',
         size=4,
         default=(0.4, 0.55, 0.8, 0.15),
+        min=0.0, max=1.0
+    )
+    
+    # Colors - Preview Range (purple/orange like Blender)
+    preview_in_color: bpy.props.FloatVectorProperty(
+        name="Preview In Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.6, 0.3, 0.9, 0.9),  # Purple
+        min=0.0, max=1.0
+    )
+    preview_out_color: bpy.props.FloatVectorProperty(
+        name="Preview Out Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(1.0, 0.5, 0.1, 0.9),  # Orange
+        min=0.0, max=1.0
+    )
+    preview_range_color: bpy.props.FloatVectorProperty(
+        name="Preview Range Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.6, 0.4, 0.8, 0.1),  # Light purple
         min=0.0, max=1.0
     )
     
@@ -235,13 +287,21 @@ class TimelineIOPreferences(bpy.types.AddonPreferences):
         row.prop(self, "bracket_thickness")
         row.prop(self, "line_thickness")
         
-        # Colors
+        # Colors - Frame Range
         box.separator()
-        box.label(text="Colors:")
+        box.label(text="Frame Range Colors:")
         row = box.row()
         row.prop(self, "in_color", text="In")
         row.prop(self, "out_color", text="Out")
         box.prop(self, "range_color", text="Range")
+        
+        # Colors - Preview Range
+        box.separator()
+        box.label(text="Preview Range Colors:")
+        row = box.row()
+        row.prop(self, "preview_in_color", text="In")
+        row.prop(self, "preview_out_color", text="Out")
+        box.prop(self, "preview_range_color", text="Range")
         
         # Per-editor settings
         layout.separator()
@@ -270,10 +330,19 @@ class TimelineIOPreferences(bpy.types.AddonPreferences):
             row.prop(settings, "bracket_thickness")
             row.prop(settings, "line_thickness")
             
+            # Frame range colors
+            col.label(text="Frame Range:")
             row = col.row()
             row.prop(settings, "in_color", text="In")
             row.prop(settings, "out_color", text="Out")
             col.prop(settings, "range_color", text="Range")
+            
+            # Preview range colors
+            col.label(text="Preview Range:")
+            row = col.row()
+            row.prop(settings, "preview_in_color", text="In")
+            row.prop(settings, "preview_out_color", text="Out")
+            col.prop(settings, "preview_range_color", text="Range")
 
 
 # -----------------------------------------------------------------------------
@@ -525,73 +594,138 @@ def draw_timeline_widgets():
     
     height = region.height
     width = region.width
-    
-    # Convert frame positions to region coordinates
-    try:
-        in_x = frame_to_region_x(context, scene.frame_start)
-        out_x = frame_to_region_x(context, scene.frame_end)
-    except Exception:
-        return
-    
-    # Check visibility
     margin = 100
-    if in_x > width + margin and out_x > width + margin:
-        return
-    if in_x < -margin and out_x < -margin:
-        return
-    
-    # Get colors from settings
-    in_color_base = tuple(settings.in_color)
-    out_color_base = tuple(settings.out_color)
-    range_color = tuple(settings.range_color)
-    
-    # Apply hover/drag brightness
-    if state.is_dragging_in:
-        in_color = brighten_color(in_color_base, 0.2)
-    elif state.hover_in:
-        in_color = brighten_color(in_color_base, 0.1)
-    else:
-        in_color = in_color_base
-    
-    if state.is_dragging_out:
-        out_color = brighten_color(out_color_base, 0.2)
-    elif state.hover_out:
-        out_color = brighten_color(out_color_base, 0.1)
-    else:
-        out_color = out_color_base
     
     # Setup GPU state
     gpu.state.blend_set('ALPHA')
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
     
-    # Draw range overlay
-    draw_range_overlay(shader, in_x, out_x, height, range_color, settings)
-    
-    # Draw handles
-    draw_handle(shader, in_x, height, in_color, settings, is_in_handle=True)
-    draw_handle(shader, out_x, height, out_color, settings, is_in_handle=False)
-    
-    gpu.state.blend_set('NONE')
-    
-    # Draw labels when hovering or dragging
     bracket_h = settings.bracket_height
     if settings.bracket_position == 'TOP':
         label_y = height - HEADER_HEIGHT - bracket_h - 18
     else:
         label_y = bracket_h + 8
     
-    if state.hover_in or state.is_dragging_in:
-        label_x = in_x + 8
-        draw_label(label_x, label_y, f"IN: {scene.frame_start}")
+    # =========================================================================
+    # Draw Frame Range widgets
+    # =========================================================================
+    try:
+        in_x = frame_to_region_x(context, scene.frame_start)
+        out_x = frame_to_region_x(context, scene.frame_end)
+    except Exception:
+        in_x, out_x = None, None
     
-    if state.hover_out or state.is_dragging_out:
-        import blf
-        text = f"OUT: {scene.frame_end}"
-        blf.size(0, 11)
-        text_w, _ = blf.dimensions(0, text)
-        label_x = out_x - text_w - 8
-        draw_label(label_x, label_y, text)
+    if in_x is not None and out_x is not None:
+        # Check visibility
+        if not (in_x > width + margin and out_x > width + margin) and \
+           not (in_x < -margin and out_x < -margin):
+            
+            # Get colors
+            in_color_base = tuple(settings.in_color)
+            out_color_base = tuple(settings.out_color)
+            range_color = tuple(settings.range_color)
+            
+            # Apply hover/drag brightness
+            if state.is_dragging_in:
+                in_color = brighten_color(in_color_base, 0.2)
+            elif state.hover_in:
+                in_color = brighten_color(in_color_base, 0.1)
+            else:
+                in_color = in_color_base
+            
+            if state.is_dragging_out:
+                out_color = brighten_color(out_color_base, 0.2)
+            elif state.hover_out:
+                out_color = brighten_color(out_color_base, 0.1)
+            else:
+                out_color = out_color_base
+            
+            # Draw range overlay
+            draw_range_overlay(shader, in_x, out_x, height, range_color, settings)
+            
+            # Draw handles
+            draw_handle(shader, in_x, height, in_color, settings, is_in_handle=True)
+            draw_handle(shader, out_x, height, out_color, settings, is_in_handle=False)
+    
+    # =========================================================================
+    # Draw Preview Range widgets (only when preview range is active)
+    # =========================================================================
+    if scene.use_preview_range:
+        try:
+            preview_in_x = frame_to_region_x(context, scene.frame_preview_start)
+            preview_out_x = frame_to_region_x(context, scene.frame_preview_end)
+        except Exception:
+            preview_in_x, preview_out_x = None, None
+        
+        if preview_in_x is not None and preview_out_x is not None:
+            # Check visibility
+            if not (preview_in_x > width + margin and preview_out_x > width + margin) and \
+               not (preview_in_x < -margin and preview_out_x < -margin):
+                
+                # Get preview colors
+                preview_in_color_base = tuple(settings.preview_in_color)
+                preview_out_color_base = tuple(settings.preview_out_color)
+                preview_range_color = tuple(settings.preview_range_color)
+                
+                # Apply hover/drag brightness
+                if state.is_dragging_preview_in:
+                    preview_in_color = brighten_color(preview_in_color_base, 0.2)
+                elif state.hover_preview_in:
+                    preview_in_color = brighten_color(preview_in_color_base, 0.1)
+                else:
+                    preview_in_color = preview_in_color_base
+                
+                if state.is_dragging_preview_out:
+                    preview_out_color = brighten_color(preview_out_color_base, 0.2)
+                elif state.hover_preview_out:
+                    preview_out_color = brighten_color(preview_out_color_base, 0.1)
+                else:
+                    preview_out_color = preview_out_color_base
+                
+                # Draw preview range overlay
+                draw_range_overlay(shader, preview_in_x, preview_out_x, height, 
+                                  preview_range_color, settings)
+                
+                # Draw preview handles
+                draw_handle(shader, preview_in_x, height, preview_in_color, settings, 
+                           is_in_handle=True)
+                draw_handle(shader, preview_out_x, height, preview_out_color, settings, 
+                           is_in_handle=False)
+    
+    gpu.state.blend_set('NONE')
+    
+    # =========================================================================
+    # Draw labels when hovering or dragging
+    # =========================================================================
+    
+    # Frame range labels
+    if in_x is not None:
+        if state.hover_in or state.is_dragging_in:
+            label_x = in_x + 8
+            draw_label(label_x, label_y, f"IN: {scene.frame_start}")
+        
+        if state.hover_out or state.is_dragging_out:
+            import blf
+            text = f"OUT: {scene.frame_end}"
+            blf.size(0, 11)
+            text_w, _ = blf.dimensions(0, text)
+            label_x = out_x - text_w - 8
+            draw_label(label_x, label_y, text)
+    
+    # Preview range labels
+    if scene.use_preview_range:
+        if state.hover_preview_in or state.is_dragging_preview_in:
+            label_x = preview_in_x + 8
+            draw_label(label_x, label_y - 16, f"PREVIEW IN: {scene.frame_preview_start}")
+        
+        if state.hover_preview_out or state.is_dragging_preview_out:
+            import blf
+            text = f"PREVIEW OUT: {scene.frame_preview_end}"
+            blf.size(0, 11)
+            text_w, _ = blf.dimensions(0, text)
+            label_x = preview_out_x - text_w - 8
+            draw_label(label_x, label_y - 16, text)
 
 
 # -----------------------------------------------------------------------------
@@ -602,29 +736,50 @@ HANDLE_HIT_THRESHOLD = 25
 
 
 def check_handle_hover(context, mouse_x):
-    """Check if mouse is hovering over a handle"""
+    """
+    Check if mouse is hovering over a handle.
+    Returns: "in", "out", "preview_in", "preview_out", or None
+    """
     if not state.enabled:
         return None
     
     scene = context.scene
+    handles = []  # List of (distance, handle_name)
+    
+    # Check frame range handles
     try:
         in_x = frame_to_region_x(context, scene.frame_start)
         out_x = frame_to_region_x(context, scene.frame_end)
+        handles.append((abs(mouse_x - in_x), "in"))
+        handles.append((abs(mouse_x - out_x), "out"))
     except Exception:
+        pass
+    
+    # Check preview range handles (only if active)
+    if scene.use_preview_range:
+        try:
+            preview_in_x = frame_to_region_x(context, scene.frame_preview_start)
+            preview_out_x = frame_to_region_x(context, scene.frame_preview_end)
+            handles.append((abs(mouse_x - preview_in_x), "preview_in"))
+            handles.append((abs(mouse_x - preview_out_x), "preview_out"))
+        except Exception:
+            pass
+    
+    if not handles:
         return None
     
-    dist_in = abs(mouse_x - in_x)
-    dist_out = abs(mouse_x - out_x)
+    # Find the closest handle within threshold
+    handles.sort(key=lambda x: x[0])
+    closest_dist, closest_handle = handles[0]
     
-    if dist_in < HANDLE_HIT_THRESHOLD and dist_in <= dist_out:
-        return "in"
-    elif dist_out < HANDLE_HIT_THRESHOLD:
-        return "out"
+    if closest_dist < HANDLE_HIT_THRESHOLD:
+        return closest_handle
+    
     return None
 
 
 class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
-    """Drag the in/out frame handles to adjust frame range"""
+    """Drag the in/out frame handles to adjust frame range or preview range"""
     bl_idname = "timeline.drag_io_handle"
     bl_label = "Drag In/Out Handle"
     bl_options = {'INTERNAL', 'UNDO'}
@@ -652,6 +807,14 @@ class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
             self.handle_type = "out"
             self.initial_frame = scene.frame_end
             state.is_dragging_out = True
+        elif handle == "preview_in":
+            self.handle_type = "preview_in"
+            self.initial_frame = scene.frame_preview_start
+            state.is_dragging_preview_in = True
+        elif handle == "preview_out":
+            self.handle_type = "preview_out"
+            self.initial_frame = scene.frame_preview_end
+            state.is_dragging_preview_out = True
         else:
             return {'PASS_THROUGH'}
         
@@ -673,33 +836,49 @@ class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
             if self.handle_type == "in":
                 new_frame = max(0, min(new_frame, scene.frame_end - 1))
                 scene.frame_start = new_frame
-            else:
+            elif self.handle_type == "out":
                 new_frame = max(scene.frame_start + 1, new_frame)
                 scene.frame_end = new_frame
+            elif self.handle_type == "preview_in":
+                new_frame = max(0, min(new_frame, scene.frame_preview_end - 1))
+                scene.frame_preview_start = new_frame
+            elif self.handle_type == "preview_out":
+                new_frame = max(scene.frame_preview_start + 1, new_frame)
+                scene.frame_preview_end = new_frame
             
             context.area.tag_redraw()
             return {'RUNNING_MODAL'}
         
         elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
             context.window.cursor_modal_restore()
-            state.is_dragging_in = False
-            state.is_dragging_out = False
+            self._reset_drag_states()
             context.area.tag_redraw()
             return {'FINISHED'}
         
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
+            # Restore original frame
             if self.handle_type == "in":
                 scene.frame_start = self.initial_frame
-            else:
+            elif self.handle_type == "out":
                 scene.frame_end = self.initial_frame
+            elif self.handle_type == "preview_in":
+                scene.frame_preview_start = self.initial_frame
+            elif self.handle_type == "preview_out":
+                scene.frame_preview_end = self.initial_frame
             
             context.window.cursor_modal_restore()
-            state.is_dragging_in = False
-            state.is_dragging_out = False
+            self._reset_drag_states()
             context.area.tag_redraw()
             return {'CANCELLED'}
         
         return {'RUNNING_MODAL'}
+    
+    def _reset_drag_states(self):
+        """Reset all drag states"""
+        state.is_dragging_in = False
+        state.is_dragging_out = False
+        state.is_dragging_preview_in = False
+        state.is_dragging_preview_out = False
 
 
 class TIMELINE_OT_hover_cursor(bpy.types.Operator):
@@ -717,27 +896,39 @@ class TIMELINE_OT_hover_cursor(bpy.types.Operator):
         
         if not (0 <= mouse_x <= context.region.width and
                 0 <= mouse_y <= context.region.height):
-            if state.hover_in or state.hover_out:
+            # Reset all hover states when outside region
+            if state.hover_in or state.hover_out or state.hover_preview_in or state.hover_preview_out:
                 state.hover_in = False
                 state.hover_out = False
+                state.hover_preview_in = False
+                state.hover_preview_out = False
                 context.window.cursor_set('DEFAULT')
                 context.area.tag_redraw()
             return {'PASS_THROUGH'}
         
         handle = check_handle_hover(context, mouse_x)
         
-        old_hover_in = state.hover_in
-        old_hover_out = state.hover_out
+        # Store old states
+        old_states = (state.hover_in, state.hover_out, 
+                      state.hover_preview_in, state.hover_preview_out)
         
+        # Update hover states
         state.hover_in = (handle == "in")
         state.hover_out = (handle == "out")
+        state.hover_preview_in = (handle == "preview_in")
+        state.hover_preview_out = (handle == "preview_out")
         
+        new_states = (state.hover_in, state.hover_out,
+                      state.hover_preview_in, state.hover_preview_out)
+        
+        # Update cursor
         if handle is not None:
             context.window.cursor_set('SCROLL_X')
         else:
             context.window.cursor_set('DEFAULT')
         
-        if old_hover_in != state.hover_in or old_hover_out != state.hover_out:
+        # Redraw if any state changed
+        if old_states != new_states:
             context.area.tag_redraw()
         
         return {'PASS_THROUGH'}
