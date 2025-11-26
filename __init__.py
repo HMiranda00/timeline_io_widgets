@@ -4,6 +4,7 @@
 
 import bpy
 import gpu
+import math
 from gpu_extras.batch import batch_for_shader
 
 
@@ -31,6 +32,303 @@ state = TimelineWidgetState()
 
 
 # -----------------------------------------------------------------------------
+# Preferences
+# -----------------------------------------------------------------------------
+
+def get_prefs():
+    """Get the addon preferences"""
+    return bpy.context.preferences.addons[__package__].preferences
+
+
+def get_editor_settings(context):
+    """Get settings for the current editor, with per-editor override support"""
+    prefs = get_prefs()
+    
+    # Map space types to editor settings
+    space_type = context.area.type if context.area else None
+    editor_map = {
+        'DOPESHEET_EDITOR': 'dopesheet',
+        'GRAPH_EDITOR': 'graph_editor',
+        'NLA_EDITOR': 'nla_editor',
+        'SEQUENCE_EDITOR': 'sequencer',
+    }
+    
+    editor_key = editor_map.get(space_type)
+    
+    if editor_key and prefs.use_per_editor_settings:
+        editor_settings = getattr(prefs, editor_key)
+        if editor_settings.override:
+            return editor_settings
+    
+    return prefs
+
+
+class TimelineIOEditorSettings(bpy.types.PropertyGroup):
+    """Per-editor override settings"""
+    override: bpy.props.BoolProperty(
+        name="Override Global Settings",
+        description="Use custom settings for this editor",
+        default=False
+    )
+    
+    # Position
+    bracket_position: bpy.props.EnumProperty(
+        name="Bracket Position",
+        items=[
+            ('TOP', "Top", "Brackets at the top (below header)"),
+            ('BOTTOM', "Bottom", "Brackets at the bottom"),
+        ],
+        default='TOP'
+    )
+    
+    # Dimensions
+    bracket_height: bpy.props.IntProperty(
+        name="Bracket Height",
+        description="Height of the bracket area",
+        default=16, min=8, max=100
+    )
+    bracket_arm_length: bpy.props.IntProperty(
+        name="Arm Length",
+        description="Horizontal length of bracket arms",
+        default=12, min=4, max=50
+    )
+    bracket_thickness: bpy.props.IntProperty(
+        name="Bracket Thickness",
+        description="Thickness of bracket lines",
+        default=3, min=1, max=10
+    )
+    line_thickness: bpy.props.IntProperty(
+        name="Line Thickness",
+        description="Thickness of vertical lines and indicator",
+        default=1, min=1, max=5
+    )
+    
+    # Round corners
+    use_round_corners: bpy.props.BoolProperty(
+        name="Round Corners",
+        description="Use rounded corners on brackets",
+        default=False
+    )
+    corner_radius: bpy.props.IntProperty(
+        name="Corner Radius",
+        description="Radius of rounded corners",
+        default=3, min=1, max=20
+    )
+    use_round_caps: bpy.props.BoolProperty(
+        name="Round Caps",
+        description="Use rounded caps on line ends",
+        default=False
+    )
+    
+    # Colors
+    in_color: bpy.props.FloatVectorProperty(
+        name="In Point Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.3, 0.9, 0.4, 0.9),
+        min=0.0, max=1.0
+    )
+    out_color: bpy.props.FloatVectorProperty(
+        name="Out Point Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(1.0, 0.35, 0.3, 0.9),
+        min=0.0, max=1.0
+    )
+    range_color: bpy.props.FloatVectorProperty(
+        name="Range Overlay Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.4, 0.55, 0.8, 0.15),
+        min=0.0, max=1.0
+    )
+
+
+class TimelineIOPreferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+    
+    # Global enable
+    enabled: bpy.props.BoolProperty(
+        name="Enable Widgets",
+        description="Show In/Out frame widgets",
+        default=True
+    )
+    
+    # Per-editor settings toggle
+    use_per_editor_settings: bpy.props.BoolProperty(
+        name="Per-Editor Settings",
+        description="Allow different settings for each editor type",
+        default=False
+    )
+    
+    # === Global Settings ===
+    
+    # Position
+    bracket_position: bpy.props.EnumProperty(
+        name="Bracket Position",
+        items=[
+            ('TOP', "Top", "Brackets at the top (below header)"),
+            ('BOTTOM', "Bottom", "Brackets at the bottom"),
+        ],
+        default='TOP'
+    )
+    
+    # Dimensions
+    bracket_height: bpy.props.IntProperty(
+        name="Bracket Height",
+        description="Height of the bracket area",
+        default=16, min=8, max=100
+    )
+    bracket_arm_length: bpy.props.IntProperty(
+        name="Arm Length",
+        description="Horizontal length of bracket arms",
+        default=12, min=4, max=50
+    )
+    bracket_thickness: bpy.props.IntProperty(
+        name="Bracket Thickness",
+        description="Thickness of bracket lines",
+        default=3, min=1, max=10
+    )
+    line_thickness: bpy.props.IntProperty(
+        name="Line Thickness",
+        description="Thickness of vertical lines and indicator",
+        default=1, min=1, max=5
+    )
+    
+    # Round corners
+    use_round_corners: bpy.props.BoolProperty(
+        name="Round Corners",
+        description="Use rounded corners on brackets",
+        default=False
+    )
+    corner_radius: bpy.props.IntProperty(
+        name="Corner Radius",
+        description="Radius of rounded corners",
+        default=3, min=1, max=20
+    )
+    use_round_caps: bpy.props.BoolProperty(
+        name="Round Caps",
+        description="Use rounded caps on line ends",
+        default=False
+    )
+    
+    # Colors
+    in_color: bpy.props.FloatVectorProperty(
+        name="In Point Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.3, 0.9, 0.4, 0.9),
+        min=0.0, max=1.0
+    )
+    out_color: bpy.props.FloatVectorProperty(
+        name="Out Point Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(1.0, 0.35, 0.3, 0.9),
+        min=0.0, max=1.0
+    )
+    range_color: bpy.props.FloatVectorProperty(
+        name="Range Overlay Color",
+        subtype='COLOR_GAMMA',
+        size=4,
+        default=(0.4, 0.55, 0.8, 0.15),
+        min=0.0, max=1.0
+    )
+    
+    # Per-editor settings
+    dopesheet: bpy.props.PointerProperty(type=TimelineIOEditorSettings)
+    graph_editor: bpy.props.PointerProperty(type=TimelineIOEditorSettings)
+    nla_editor: bpy.props.PointerProperty(type=TimelineIOEditorSettings)
+    sequencer: bpy.props.PointerProperty(type=TimelineIOEditorSettings)
+    
+    def draw(self, context):
+        layout = self.layout
+        
+        # Main toggle
+        layout.prop(self, "enabled", text="Enable In/Out Widgets")
+        
+        if not self.enabled:
+            return
+        
+        layout.separator()
+        
+        # Global settings
+        box = layout.box()
+        box.label(text="Global Settings", icon='PREFERENCES')
+        
+        # Position
+        row = box.row()
+        row.prop(self, "bracket_position", expand=True)
+        
+        # Dimensions
+        col = box.column(align=True)
+        col.prop(self, "bracket_height")
+        col.prop(self, "bracket_arm_length")
+        
+        row = box.row(align=True)
+        row.prop(self, "bracket_thickness")
+        row.prop(self, "line_thickness")
+        
+        # Round corners
+        box.separator()
+        row = box.row()
+        row.prop(self, "use_round_corners")
+        sub = row.row()
+        sub.enabled = self.use_round_corners
+        sub.prop(self, "corner_radius")
+        
+        box.prop(self, "use_round_caps")
+        
+        # Colors
+        box.separator()
+        box.label(text="Colors:")
+        row = box.row()
+        row.prop(self, "in_color", text="In")
+        row.prop(self, "out_color", text="Out")
+        box.prop(self, "range_color", text="Range")
+        
+        # Per-editor settings
+        layout.separator()
+        layout.prop(self, "use_per_editor_settings")
+        
+        if self.use_per_editor_settings:
+            self.draw_editor_settings(layout, "Dope Sheet", self.dopesheet)
+            self.draw_editor_settings(layout, "Graph Editor", self.graph_editor)
+            self.draw_editor_settings(layout, "NLA Editor", self.nla_editor)
+            self.draw_editor_settings(layout, "Sequencer", self.sequencer)
+    
+    def draw_editor_settings(self, layout, name, settings):
+        box = layout.box()
+        row = box.row()
+        row.prop(settings, "override", text=name)
+        
+        if settings.override:
+            col = box.column()
+            col.prop(settings, "bracket_position")
+            
+            row = col.row(align=True)
+            row.prop(settings, "bracket_height")
+            row.prop(settings, "bracket_arm_length")
+            
+            row = col.row(align=True)
+            row.prop(settings, "bracket_thickness")
+            row.prop(settings, "line_thickness")
+            
+            row = col.row()
+            row.prop(settings, "use_round_corners")
+            sub = row.row()
+            sub.enabled = settings.use_round_corners
+            sub.prop(settings, "corner_radius")
+            
+            col.prop(settings, "use_round_caps")
+            
+            row = col.row()
+            row.prop(settings, "in_color", text="In")
+            row.prop(settings, "out_color", text="Out")
+            col.prop(settings, "range_color", text="Range")
+
+
+# -----------------------------------------------------------------------------
 # Coordinate Conversion Functions
 # -----------------------------------------------------------------------------
 
@@ -51,136 +349,200 @@ def region_x_to_frame(context, x):
 
 
 # -----------------------------------------------------------------------------
-# Drawing Configuration
-# -----------------------------------------------------------------------------
-
-# Thickness settings
-LINE_WIDTH = 1           # Thin vertical lines
-BRACKET_WIDTH = 3        # Bracket thickness
-
-# Height of the timeline header (where frame numbers are displayed)
-HEADER_HEIGHT = 18
-
-# Bracket dimensions (positioned just below the header)
-BRACKET_HEIGHT = 16      # Small bracket height (+15%)
-BRACKET_ARM_LENGTH = 12  # Horizontal arm length (+15%)
-
-# Indicator dot size (small mark over the numbers)
-INDICATOR_SIZE = 4
-
-
-# -----------------------------------------------------------------------------
 # Drawing Functions
 # -----------------------------------------------------------------------------
 
-def draw_rect(shader, x, y, width, height, color):
-    """Draw a filled rectangle"""
-    vertices = [
-        (x, y),
-        (x + width, y),
-        (x + width, y + height),
-        (x, y + height),
+HEADER_HEIGHT = 18  # Height of timeline header (constant)
+
+
+def generate_rounded_rect_vertices(x, y, width, height, radius, segments=4):
+    """Generate vertices for a rounded rectangle"""
+    if radius <= 0 or radius * 2 > min(width, height):
+        # Fall back to regular rectangle
+        return [
+            (x, y), (x + width, y),
+            (x + width, y + height), (x, y + height)
+        ], [(0, 1, 2), (0, 2, 3)]
+    
+    vertices = []
+    
+    # Corner centers
+    corners = [
+        (x + radius, y + radius, math.pi, 1.5 * math.pi),           # bottom-left
+        (x + width - radius, y + radius, 1.5 * math.pi, 2 * math.pi),  # bottom-right
+        (x + width - radius, y + height - radius, 0, 0.5 * math.pi),   # top-right
+        (x + radius, y + height - radius, 0.5 * math.pi, math.pi),     # top-left
     ]
-    indices = [(0, 1, 2), (0, 2, 3)]
+    
+    for cx, cy, start_angle, end_angle in corners:
+        for i in range(segments + 1):
+            t = i / segments
+            angle = start_angle + t * (end_angle - start_angle)
+            vx = cx + radius * math.cos(angle)
+            vy = cy + radius * math.sin(angle)
+            vertices.append((vx, vy))
+    
+    # Generate triangle indices (fan from center)
+    center = (x + width / 2, y + height / 2)
+    vertices.insert(0, center)
+    
+    indices = []
+    num_verts = len(vertices)
+    for i in range(1, num_verts - 1):
+        indices.append((0, i, i + 1))
+    indices.append((0, num_verts - 1, 1))
+    
+    return vertices, indices
+
+
+def generate_round_cap_vertices(x, y, radius, is_top=True, segments=4):
+    """Generate vertices for a semicircle cap"""
+    vertices = [(x, y)]  # Center
+    
+    start_angle = 0 if is_top else math.pi
+    end_angle = math.pi if is_top else 2 * math.pi
+    
+    for i in range(segments + 1):
+        t = i / segments
+        angle = start_angle + t * (end_angle - start_angle)
+        vx = x + radius * math.cos(angle)
+        vy = y + radius * math.sin(angle)
+        vertices.append((vx, vy))
+    
+    indices = []
+    for i in range(1, len(vertices) - 1):
+        indices.append((0, i, i + 1))
+    
+    return vertices, indices
+
+
+def draw_rect(shader, x, y, width, height, color, rounded=False, radius=0):
+    """Draw a filled rectangle, optionally with rounded corners"""
+    if rounded and radius > 0:
+        vertices, indices = generate_rounded_rect_vertices(x, y, width, height, radius)
+    else:
+        vertices = [
+            (x, y),
+            (x + width, y),
+            (x + width, y + height),
+            (x, y + height),
+        ]
+        indices = [(0, 1, 2), (0, 2, 3)]
+    
     batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
     shader.uniform_float("color", color)
     batch.draw(shader)
 
 
-def draw_handle(shader, x, region_height, color, is_in_handle=True):
-    """
-    Draw a complete handle with:
-    - Small indicator dot in the header (over the numbers)
-    - Thin vertical line from header to brackets
-    - Bracket shape just below the header
-    """
-    line_w = LINE_WIDTH
-    bracket_w = BRACKET_WIDTH
+def draw_vertical_line_with_caps(shader, x, y_bottom, y_top, width, color, round_caps=False):
+    """Draw a vertical line, optionally with round caps"""
+    half_w = width / 2
+    
+    # Main line body
+    draw_rect(shader, x - half_w, y_bottom, width, y_top - y_bottom, color)
+    
+    # Round caps
+    if round_caps and width >= 2:
+        cap_radius = half_w
+        
+        # Bottom cap
+        verts, indices = generate_round_cap_vertices(x, y_bottom, cap_radius, is_top=False)
+        batch = batch_for_shader(shader, 'TRIS', {"pos": verts}, indices=indices)
+        shader.uniform_float("color", color)
+        batch.draw(shader)
+        
+        # Top cap
+        verts, indices = generate_round_cap_vertices(x, y_top, cap_radius, is_top=True)
+        batch = batch_for_shader(shader, 'TRIS', {"pos": verts}, indices=indices)
+        shader.uniform_float("color", color)
+        batch.draw(shader)
+
+
+def draw_handle(shader, x, region_height, color, settings, is_in_handle=True):
+    """Draw a complete handle with bracket and lines"""
+    line_w = settings.line_thickness
+    bracket_w = settings.bracket_thickness
+    bracket_h = settings.bracket_height
+    arm_len = settings.bracket_arm_length
     half_line = line_w / 2
     half_bracket = bracket_w / 2
     
-    # Area boundaries
-    header_bottom = region_height - HEADER_HEIGHT
-    bracket_top = header_bottom
-    bracket_bottom = header_bottom - BRACKET_HEIGHT
+    use_rounded = settings.use_round_corners
+    radius = settings.corner_radius if use_rounded else 0
+    round_caps = settings.use_round_caps
     
-    # 1. Draw small indicator dot in header area (over the numbers)
-    indicator_y = region_height - INDICATOR_SIZE - 2  # Near top of header
-    draw_rect(shader, 
-              x - half_line, 
-              indicator_y,
-              line_w, 
-              INDICATOR_SIZE, 
-              color)
+    # Determine bracket position
+    if settings.bracket_position == 'TOP':
+        header_bottom = region_height - HEADER_HEIGHT
+        bracket_top = header_bottom
+        bracket_bottom = header_bottom - bracket_h
+        line_bottom = 0
+        line_top = bracket_bottom
+    else:  # BOTTOM
+        bracket_bottom = 0
+        bracket_top = bracket_h
+        line_bottom = bracket_top
+        line_top = region_height - HEADER_HEIGHT
     
-    # 2. Draw thin vertical line (from below header to bottom of view)
-    draw_rect(shader,
-              x - half_line,
-              0,
-              line_w,
-              bracket_bottom,
-              color)
+    # 1. Draw small indicator in header area
+    indicator_size = max(line_w, 4)
+    indicator_y = region_height - indicator_size - 2
+    draw_rect(shader, x - half_line, indicator_y, line_w, indicator_size, color)
     
-    # 3. Draw bracket just below header
+    # 2. Draw main vertical line
+    draw_vertical_line_with_caps(shader, x, line_bottom, line_top, line_w, color, round_caps)
+    
+    # 3. Draw bracket
+    # Vertical bar of bracket
+    draw_rect(shader, x - half_bracket, bracket_bottom, bracket_w, bracket_h, color,
+              rounded=use_rounded, radius=min(radius, bracket_w / 2))
+    
     if is_in_handle:
-        # "[" shape - vertical bar + arms extending right
-        # Vertical bar of bracket
-        draw_rect(shader, x - half_bracket, bracket_bottom, bracket_w, BRACKET_HEIGHT, color)
-        
-        # Top arm (horizontal, extending right)
-        draw_rect(shader, 
-                  x - half_bracket, 
-                  bracket_top - bracket_w, 
-                  BRACKET_ARM_LENGTH, 
-                  bracket_w, 
-                  color)
-        
-        # Bottom arm (horizontal, extending right)
-        draw_rect(shader, 
-                  x - half_bracket, 
-                  bracket_bottom, 
-                  BRACKET_ARM_LENGTH, 
-                  bracket_w, 
-                  color)
+        # "[" shape - arms extending right
+        # Top arm
+        draw_rect(shader, x - half_bracket, bracket_top - bracket_w, arm_len, bracket_w, color,
+                  rounded=use_rounded, radius=min(radius, bracket_w / 2))
+        # Bottom arm
+        draw_rect(shader, x - half_bracket, bracket_bottom, arm_len, bracket_w, color,
+                  rounded=use_rounded, radius=min(radius, bracket_w / 2))
     else:
-        # "]" shape - vertical bar + arms extending left
-        # Vertical bar of bracket
-        draw_rect(shader, x - half_bracket, bracket_bottom, bracket_w, BRACKET_HEIGHT, color)
-        
-        # Top arm (horizontal, extending left)
-        draw_rect(shader, 
-                  x - BRACKET_ARM_LENGTH + half_bracket, 
-                  bracket_top - bracket_w, 
-                  BRACKET_ARM_LENGTH, 
-                  bracket_w, 
-                  color)
-        
-        # Bottom arm (horizontal, extending left)
-        draw_rect(shader, 
-                  x - BRACKET_ARM_LENGTH + half_bracket, 
-                  bracket_bottom, 
-                  BRACKET_ARM_LENGTH, 
-                  bracket_w, 
-                  color)
+        # "]" shape - arms extending left
+        # Top arm
+        draw_rect(shader, x - arm_len + half_bracket, bracket_top - bracket_w, arm_len, bracket_w, color,
+                  rounded=use_rounded, radius=min(radius, bracket_w / 2))
+        # Bottom arm
+        draw_rect(shader, x - arm_len + half_bracket, bracket_bottom, arm_len, bracket_w, color,
+                  rounded=use_rounded, radius=min(radius, bracket_w / 2))
 
 
-def draw_range_overlay(shader, in_x, out_x, region_height, color):
-    """Draw the highlighted range area between the brackets (just below header)"""
+def draw_range_overlay(shader, in_x, out_x, region_height, color, settings):
+    """Draw the highlighted range area between brackets"""
     if in_x >= out_x:
         return
     
-    header_bottom = region_height - HEADER_HEIGHT
-    bracket_top = header_bottom
-    bracket_bottom = header_bottom - BRACKET_HEIGHT
+    bracket_h = settings.bracket_height
+    bracket_w = settings.bracket_thickness
     
-    # Draw overlay inside the bracket area
-    overlay_padding = BRACKET_WIDTH
-    draw_rect(shader, 
-              in_x + overlay_padding,
-              bracket_bottom + overlay_padding, 
-              out_x - in_x - overlay_padding * 2,
-              BRACKET_HEIGHT - overlay_padding * 2, 
-              color)
+    if settings.bracket_position == 'TOP':
+        header_bottom = region_height - HEADER_HEIGHT
+        bracket_top = header_bottom
+        bracket_bottom = header_bottom - bracket_h
+    else:
+        bracket_bottom = 0
+        bracket_top = bracket_h
+    
+    padding = bracket_w
+    use_rounded = settings.use_round_corners
+    radius = settings.corner_radius if use_rounded else 0
+    
+    draw_rect(shader,
+              in_x + padding,
+              bracket_bottom + padding,
+              out_x - in_x - padding * 2,
+              bracket_h - padding * 2,
+              color,
+              rounded=use_rounded,
+              radius=radius)
 
 
 def draw_label(x, y, text):
@@ -193,7 +555,6 @@ def draw_label(x, y, text):
     text_w, text_h = blf.dimensions(font_id, text)
     padding = 4
     
-    # Background
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
     
@@ -203,25 +564,36 @@ def draw_label(x, y, text):
         (x + text_w + padding, y + text_h + padding),
         (x - padding, y + text_h + padding),
     ]
-    bg_batch = batch_for_shader(shader, 'TRIS', {"pos": bg_verts}, 
+    bg_batch = batch_for_shader(shader, 'TRIS', {"pos": bg_verts},
                                  indices=[(0, 1, 2), (0, 2, 3)])
     shader.uniform_float("color", (0.0, 0.0, 0.0, 0.85))
     bg_batch.draw(shader)
     
-    # Text
     blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
     blf.position(font_id, x, y, 0)
     blf.draw(font_id, text)
 
 
+def brighten_color(color, factor=0.15):
+    """Brighten a color for hover/drag states"""
+    return tuple(min(1.0, c + factor) for c in color[:3]) + (min(1.0, color[3] + 0.1),)
+
+
 def draw_timeline_widgets():
     """Main draw callback for timeline widgets"""
-    if not state.enabled:
-        return
-    
     context = bpy.context
     
     if context is None:
+        return
+    
+    try:
+        prefs = get_prefs()
+        if not prefs.enabled:
+            return
+    except Exception:
+        return
+    
+    if not state.enabled:
         return
     
     region = context.region
@@ -232,6 +604,12 @@ def draw_timeline_widgets():
     if scene is None:
         return
     
+    # Get settings (global or per-editor)
+    try:
+        settings = get_editor_settings(context)
+    except Exception:
+        return
+    
     height = region.height
     width = region.width
     
@@ -239,40 +617,33 @@ def draw_timeline_widgets():
     try:
         in_x = frame_to_region_x(context, scene.frame_start)
         out_x = frame_to_region_x(context, scene.frame_end)
-    except Exception as e:
-        print(f"Timeline IO Widgets: Error converting coordinates: {e}")
+    except Exception:
         return
     
-    # Check if handles are visible
+    # Check visibility
     margin = 100
     if in_x > width + margin and out_x > width + margin:
         return
     if in_x < -margin and out_x < -margin:
         return
     
-    # Colors
-    in_color_base = (0.3, 0.9, 0.4, 0.9)      # Green
-    in_color_hover = (0.4, 1.0, 0.5, 1.0)
-    in_color_drag = (0.5, 1.0, 0.6, 1.0)
+    # Get colors from settings
+    in_color_base = tuple(settings.in_color)
+    out_color_base = tuple(settings.out_color)
+    range_color = tuple(settings.range_color)
     
-    out_color_base = (1.0, 0.35, 0.3, 0.9)    # Red
-    out_color_hover = (1.0, 0.5, 0.45, 1.0)
-    out_color_drag = (1.0, 0.65, 0.6, 1.0)
-    
-    range_color = (0.4, 0.55, 0.8, 0.15)      # Blue tint
-    
-    # Select colors based on state
+    # Apply hover/drag brightness
     if state.is_dragging_in:
-        in_color = in_color_drag
+        in_color = brighten_color(in_color_base, 0.2)
     elif state.hover_in:
-        in_color = in_color_hover
+        in_color = brighten_color(in_color_base, 0.1)
     else:
         in_color = in_color_base
     
     if state.is_dragging_out:
-        out_color = out_color_drag
+        out_color = brighten_color(out_color_base, 0.2)
     elif state.hover_out:
-        out_color = out_color_hover
+        out_color = brighten_color(out_color_base, 0.1)
     else:
         out_color = out_color_base
     
@@ -281,17 +652,21 @@ def draw_timeline_widgets():
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     shader.bind()
     
-    # Draw range overlay (between brackets only)
-    draw_range_overlay(shader, in_x, out_x, height, range_color)
+    # Draw range overlay
+    draw_range_overlay(shader, in_x, out_x, height, range_color, settings)
     
     # Draw handles
-    draw_handle(shader, in_x, height, in_color, is_in_handle=True)
-    draw_handle(shader, out_x, height, out_color, is_in_handle=False)
+    draw_handle(shader, in_x, height, in_color, settings, is_in_handle=True)
+    draw_handle(shader, out_x, height, out_color, settings, is_in_handle=False)
     
     gpu.state.blend_set('NONE')
     
-    # Draw labels when hovering or dragging (below the brackets)
-    label_y = height - HEADER_HEIGHT - BRACKET_HEIGHT - 18
+    # Draw labels when hovering or dragging
+    bracket_h = settings.bracket_height
+    if settings.bracket_position == 'TOP':
+        label_y = height - HEADER_HEIGHT - bracket_h - 18
+    else:
+        label_y = bracket_h + 8
     
     if state.hover_in or state.is_dragging_in:
         label_x = in_x + 8
@@ -310,12 +685,11 @@ def draw_timeline_widgets():
 # Operators
 # -----------------------------------------------------------------------------
 
-# Hit detection threshold for handles
 HANDLE_HIT_THRESHOLD = 25
 
 
 def check_handle_hover(context, mouse_x):
-    """Check if mouse is hovering over a handle and return which one"""
+    """Check if mouse is hovering over a handle"""
     if not state.enabled:
         return None
     
@@ -347,8 +721,8 @@ class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
     
     @classmethod
     def poll(cls, context):
-        return (context.area is not None and 
-                context.region is not None and 
+        return (context.area is not None and
+                context.region is not None and
                 state.enabled)
     
     def invoke(self, context, event):
@@ -368,9 +742,7 @@ class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
         else:
             return {'PASS_THROUGH'}
         
-        # Set cursor to indicate horizontal movement
         context.window.cursor_modal_set('SCROLL_X')
-        
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
         
@@ -427,14 +799,11 @@ class TIMELINE_OT_hover_cursor(bpy.types.Operator):
         if not state.enabled or context.region is None:
             return {'PASS_THROUGH'}
         
-        # Get mouse position from event (relative to region)
         mouse_x = event.mouse_region_x
         mouse_y = event.mouse_region_y
         
-        # Check if mouse is in our region
-        if not (0 <= mouse_x <= context.region.width and 
+        if not (0 <= mouse_x <= context.region.width and
                 0 <= mouse_y <= context.region.height):
-            # Reset hover state when outside
             if state.hover_in or state.hover_out:
                 state.hover_in = False
                 state.hover_out = False
@@ -444,20 +813,17 @@ class TIMELINE_OT_hover_cursor(bpy.types.Operator):
         
         handle = check_handle_hover(context, mouse_x)
         
-        # Update hover state
         old_hover_in = state.hover_in
         old_hover_out = state.hover_out
         
         state.hover_in = (handle == "in")
         state.hover_out = (handle == "out")
         
-        # Change cursor based on hover
         if handle is not None:
             context.window.cursor_set('SCROLL_X')
         else:
             context.window.cursor_set('DEFAULT')
         
-        # Redraw if hover state changed
         if old_hover_in != state.hover_in or old_hover_out != state.hover_out:
             context.area.tag_redraw()
         
@@ -512,9 +878,10 @@ VIEW_MENUS = [
 ]
 
 addon_keymaps = []
-hover_operators = {}  # Track hover operators per area
 
 classes = (
+    TimelineIOEditorSettings,
+    TimelineIOPreferences,
     TIMELINE_OT_drag_io_handle,
     TIMELINE_OT_hover_cursor,
     TIMELINE_OT_toggle_io_widgets,
@@ -543,7 +910,7 @@ def register():
     if kc:
         # Dopesheet
         km = kc.keymaps.new(name='Dopesheet', space_type='DOPESHEET_EDITOR')
-        kmi = km.keymap_items.new(TIMELINE_OT_drag_io_handle.bl_idname, 
+        kmi = km.keymap_items.new(TIMELINE_OT_drag_io_handle.bl_idname,
                                    'LEFTMOUSE', 'PRESS')
         addon_keymaps.append((km, kmi))
         kmi = km.keymap_items.new(TIMELINE_OT_hover_cursor.bl_idname,
