@@ -5,7 +5,6 @@
 import bpy
 import gpu
 from gpu_extras.batch import batch_for_shader
-from mathutils import Vector
 
 
 # -----------------------------------------------------------------------------
@@ -32,155 +31,134 @@ state = TimelineWidgetState()
 
 
 # -----------------------------------------------------------------------------
-# Drawing Functions
+# Coordinate Conversion Functions
 # -----------------------------------------------------------------------------
 
-def get_view2d_from_region(context):
-    """Get the View2D from the current region for coordinate conversion"""
-    region = context.region
-    # Access view2d through the region
-    if hasattr(region, 'view2d'):
-        return region.view2d
-    return None
-
-
-def frame_to_region_x(context, frame):
-    """Convert a frame number to region x coordinate"""
-    region = context.region
-    view2d = get_view2d_from_region(context)
+def frame_to_region_x(region, frame):
+    """
+    Convert a frame number to region x coordinate using View2D.
+    This properly accounts for zoom and pan in the timeline view.
+    """
+    view2d = region.view2d
     
-    if view2d is None:
-        # Fallback calculation
-        space = context.space_data
-        if hasattr(space, 'view_start') and hasattr(space, 'view_end'):
-            view_start = space.view_start
-            view_end = space.view_end
-        else:
-            view_start = context.scene.frame_start - 10
-            view_end = context.scene.frame_end + 10
-        
-        if view_end - view_start == 0:
-            return 0
-        
-        normalized = (frame - view_start) / (view_end - view_start)
-        return int(normalized * region.width)
-    
-    # Use view2d for accurate conversion
+    # view_to_region converts from view coordinates (frames) to region pixels
+    # The y value doesn't matter for x conversion, so we use 0
     x, _ = view2d.view_to_region(frame, 0, clip=False)
+    
     return x
 
 
-def region_x_to_frame(context, x):
-    """Convert region x coordinate to frame number"""
-    region = context.region
-    view2d = get_view2d_from_region(context)
+def region_x_to_frame(region, x):
+    """
+    Convert region x coordinate to frame number using View2D.
+    """
+    view2d = region.view2d
     
-    if view2d is None:
-        # Fallback calculation
-        space = context.space_data
-        if hasattr(space, 'view_start') and hasattr(space, 'view_end'):
-            view_start = space.view_start
-            view_end = space.view_end
-        else:
-            view_start = context.scene.frame_start - 10
-            view_end = context.scene.frame_end + 10
-        
-        normalized = x / region.width
-        return int(view_start + normalized * (view_end - view_start))
-    
-    # Use view2d for accurate conversion
+    # region_to_view converts from region pixels to view coordinates (frames)
     frame, _ = view2d.region_to_view(x, 0)
-    return int(frame)
+    
+    return int(round(frame))
 
 
-def draw_handle_shape(x, height, color, is_in_handle=True):
+# -----------------------------------------------------------------------------
+# Drawing Functions
+# -----------------------------------------------------------------------------
+
+def draw_handle_shape(shader, x, height, color, is_in_handle=True):
     """Draw a handle shape at the given x position"""
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     
     # Handle dimensions
-    handle_width = 8
-    handle_height = min(40, height * 0.4)
-    triangle_size = 12
+    handle_width = 6
+    bracket_height = min(50, height * 0.5)
+    triangle_size = 10
     
     vertices = []
     indices = []
+    idx = 0
+    
+    # Full height vertical line (thin)
+    line_half_width = 1.5
+    vertices.extend([
+        (x - line_half_width, 0),
+        (x + line_half_width, 0),
+        (x + line_half_width, height),
+        (x - line_half_width, height),
+    ])
+    indices.extend([(idx, idx+1, idx+2), (idx, idx+2, idx+3)])
+    idx += 4
     
     if is_in_handle:
-        # In handle: bracket shape pointing right [ with triangle
-        # Vertical bar
+        # IN handle: bracket [ shape at bottom
+        # Vertical part of bracket
         vertices.extend([
             (x, 0),
             (x + handle_width, 0),
-            (x + handle_width, handle_height),
-            (x, handle_height),
+            (x + handle_width, bracket_height),
+            (x, bracket_height),
         ])
-        indices.extend([(0, 1, 2), (0, 2, 3)])
+        indices.extend([(idx, idx+1, idx+2), (idx, idx+2, idx+3)])
+        idx += 4
         
-        # Top horizontal bar
+        # Horizontal part of bracket (top)
         vertices.extend([
-            (x, handle_height - handle_width),
-            (x + handle_width * 2, handle_height - handle_width),
-            (x + handle_width * 2, handle_height),
-            (x, handle_height),
+            (x, bracket_height - handle_width),
+            (x + handle_width * 2.5, bracket_height - handle_width),
+            (x + handle_width * 2.5, bracket_height),
+            (x, bracket_height),
         ])
-        indices.extend([(4, 5, 6), (4, 6, 7)])
+        indices.extend([(idx, idx+1, idx+2), (idx, idx+2, idx+3)])
+        idx += 4
         
-        # Triangle pointer at top
-        mid_y = height - 20
+        # Triangle arrow at top pointing right
+        arrow_y = height - 25
         vertices.extend([
-            (x, mid_y - triangle_size),
-            (x + triangle_size, mid_y),
-            (x, mid_y + triangle_size),
+            (x, arrow_y - triangle_size),
+            (x + triangle_size, arrow_y),
+            (x, arrow_y + triangle_size),
         ])
-        indices.append((8, 9, 10))
+        indices.append((idx, idx+1, idx+2))
         
     else:
-        # Out handle: bracket shape pointing left ] with triangle
-        # Vertical bar
+        # OUT handle: bracket ] shape at bottom
+        # Vertical part of bracket
         vertices.extend([
             (x - handle_width, 0),
             (x, 0),
-            (x, handle_height),
-            (x - handle_width, handle_height),
+            (x, bracket_height),
+            (x - handle_width, bracket_height),
         ])
-        indices.extend([(0, 1, 2), (0, 2, 3)])
+        indices.extend([(idx, idx+1, idx+2), (idx, idx+2, idx+3)])
+        idx += 4
         
-        # Top horizontal bar
+        # Horizontal part of bracket (top)
         vertices.extend([
-            (x - handle_width * 2, handle_height - handle_width),
-            (x, handle_height - handle_width),
-            (x, handle_height),
-            (x - handle_width * 2, handle_height),
+            (x - handle_width * 2.5, bracket_height - handle_width),
+            (x, bracket_height - handle_width),
+            (x, bracket_height),
+            (x - handle_width * 2.5, bracket_height),
         ])
-        indices.extend([(4, 5, 6), (4, 6, 7)])
+        indices.extend([(idx, idx+1, idx+2), (idx, idx+2, idx+3)])
+        idx += 4
         
-        # Triangle pointer at top
-        mid_y = height - 20
+        # Triangle arrow at top pointing left
+        arrow_y = height - 25
         vertices.extend([
-            (x, mid_y - triangle_size),
-            (x - triangle_size, mid_y),
-            (x, mid_y + triangle_size),
+            (x, arrow_y - triangle_size),
+            (x - triangle_size, arrow_y),
+            (x, arrow_y + triangle_size),
         ])
-        indices.append((8, 9, 10))
+        indices.append((idx, idx+1, idx+2))
     
     batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
     
-    gpu.state.blend_set('ALPHA')
-    shader.bind()
     shader.uniform_float("color", color)
     batch.draw(shader)
-    
-    # Draw vertical line spanning full height
-    line_vertices = [(x, 0), (x, height)]
-    line_batch = batch_for_shader(shader, 'LINES', {"pos": line_vertices})
-    line_batch.draw(shader)
-    
-    gpu.state.blend_set('NONE')
 
 
-def draw_range_overlay(x_start, x_end, height, color):
+def draw_range_overlay(shader, x_start, x_end, height, color):
     """Draw a semi-transparent overlay for the frame range"""
-    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    if x_start >= x_end:
+        return
     
     vertices = [
         (x_start, 0),
@@ -191,12 +169,8 @@ def draw_range_overlay(x_start, x_end, height, color):
     indices = [(0, 1, 2), (0, 2, 3)]
     
     batch = batch_for_shader(shader, 'TRIS', {"pos": vertices}, indices=indices)
-    
-    gpu.state.blend_set('ALPHA')
-    shader.bind()
     shader.uniform_float("color", color)
     batch.draw(shader)
-    gpu.state.blend_set('NONE')
 
 
 def draw_frame_label(x, y, frame, is_in=True):
@@ -204,20 +178,39 @@ def draw_frame_label(x, y, frame, is_in=True):
     import blf
     
     font_id = 0
-    text = f"{'IN' if is_in else 'OUT'}: {frame}"
+    label = "IN" if is_in else "OUT"
+    text = f"{label}: {frame}"
     
-    blf.size(font_id, 11)
-    blf.color(font_id, 1.0, 1.0, 1.0, 0.9)
+    blf.size(font_id, 12)
     
-    # Get text dimensions for background
+    # Get text dimensions
     text_width, text_height = blf.dimensions(font_id, text)
     
-    # Offset based on handle type
+    # Position: offset from handle
+    padding = 8
     if is_in:
-        text_x = x + 15
+        text_x = x + padding
     else:
-        text_x = x - text_width - 15
+        text_x = x - text_width - padding
     
+    # Draw background
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    bg_padding = 4
+    bg_verts = [
+        (text_x - bg_padding, y - bg_padding),
+        (text_x + text_width + bg_padding, y - bg_padding),
+        (text_x + text_width + bg_padding, y + text_height + bg_padding),
+        (text_x - bg_padding, y + text_height + bg_padding),
+    ]
+    bg_indices = [(0, 1, 2), (0, 2, 3)]
+    bg_batch = batch_for_shader(shader, 'TRIS', {"pos": bg_verts}, indices=bg_indices)
+    
+    shader.bind()
+    shader.uniform_float("color", (0.1, 0.1, 0.1, 0.85))
+    bg_batch.draw(shader)
+    
+    # Draw text
+    blf.color(font_id, 1.0, 1.0, 1.0, 1.0)
     blf.position(font_id, text_x, y, 0)
     blf.draw(font_id, text)
 
@@ -227,32 +220,52 @@ def draw_timeline_widgets(context):
     if not state.enabled:
         return
     
-    scene = context.scene
-    region = context.region
-    
-    if region is None:
+    # Verify we're in the right context
+    if context.area is None or context.region is None:
         return
     
+    # Only draw in WINDOW region (not channels sidebar)
+    if context.region.type != 'WINDOW':
+        return
+    
+    scene = context.scene
+    region = context.region
     height = region.height
     
-    # Get frame positions in region coordinates
-    in_x = frame_to_region_x(context, scene.frame_start)
-    out_x = frame_to_region_x(context, scene.frame_end)
+    # Get frame positions in region coordinates using View2D
+    try:
+        in_x = frame_to_region_x(region, scene.frame_start)
+        out_x = frame_to_region_x(region, scene.frame_end)
+    except Exception:
+        # Fallback if view2d is not available
+        return
+    
+    # Skip if handles would be outside visible region
+    # (with some margin to allow partial visibility)
+    margin = 50
+    if in_x < -margin and out_x < -margin:
+        return
+    if in_x > region.width + margin and out_x > region.width + margin:
+        return
     
     # Colors
-    in_color_normal = (0.2, 0.8, 0.3, 0.7)      # Green
-    in_color_hover = (0.3, 1.0, 0.4, 0.9)       # Bright green
-    in_color_drag = (0.5, 1.0, 0.6, 1.0)        # Very bright green
+    in_color_normal = (0.2, 0.85, 0.35, 0.8)     # Green
+    in_color_hover = (0.3, 1.0, 0.45, 0.95)      # Bright green
+    in_color_drag = (0.5, 1.0, 0.6, 1.0)         # Very bright green
     
-    out_color_normal = (0.9, 0.3, 0.2, 0.7)     # Red
-    out_color_hover = (1.0, 0.4, 0.3, 0.9)      # Bright red
-    out_color_drag = (1.0, 0.6, 0.5, 1.0)       # Very bright red
+    out_color_normal = (0.95, 0.25, 0.2, 0.8)    # Red
+    out_color_hover = (1.0, 0.4, 0.35, 0.95)     # Bright red
+    out_color_drag = (1.0, 0.6, 0.55, 1.0)       # Very bright red
     
-    range_color = (0.5, 0.7, 1.0, 0.05)         # Light blue tint
+    range_color = (0.4, 0.6, 0.9, 0.08)          # Light blue tint
+    
+    # Setup GPU state
+    gpu.state.blend_set('ALPHA')
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    shader.bind()
     
     # Draw range overlay between in and out
-    if in_x < out_x:
-        draw_range_overlay(in_x, out_x, height, range_color)
+    draw_range_overlay(shader, in_x, out_x, height, range_color)
     
     # Choose colors based on state
     if state.is_dragging_in:
@@ -270,54 +283,69 @@ def draw_timeline_widgets(context):
         out_color = out_color_normal
     
     # Draw handles
-    draw_handle_shape(in_x, height, in_color, is_in_handle=True)
-    draw_handle_shape(out_x, height, out_color, is_in_handle=False)
+    draw_handle_shape(shader, in_x, height, in_color, is_in_handle=True)
+    draw_handle_shape(shader, out_x, height, out_color, is_in_handle=False)
+    
+    gpu.state.blend_set('NONE')
     
     # Draw labels when hovering or dragging
     if state.hover_in or state.is_dragging_in:
-        draw_frame_label(in_x, height - 50, scene.frame_start, is_in=True)
+        draw_frame_label(in_x, height - 45, scene.frame_start, is_in=True)
     
     if state.hover_out or state.is_dragging_out:
-        draw_frame_label(out_x, height - 50, scene.frame_end, is_in=False)
+        draw_frame_label(out_x, height - 45, scene.frame_end, is_in=False)
 
 
 # -----------------------------------------------------------------------------
-# Modal Operator for Interaction
+# Operators
 # -----------------------------------------------------------------------------
 
-class TIMELINE_OT_drag_io_handles(bpy.types.Operator):
-    """Drag the in/out frame handles"""
-    bl_idname = "timeline.drag_io_handles"
-    bl_label = "Drag In/Out Handles"
-    bl_options = {'INTERNAL'}
+class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
+    """Drag the in/out frame handles to adjust frame range"""
+    bl_idname = "timeline.drag_io_handle"
+    bl_label = "Drag In/Out Handle"
+    bl_options = {'INTERNAL', 'UNDO'}
     
-    handle_type: bpy.props.StringProperty(default="")  # "in" or "out"
+    handle_type: bpy.props.StringProperty(default="")
     initial_frame: bpy.props.IntProperty()
-    initial_mouse_x: bpy.props.IntProperty()
+    
+    @classmethod
+    def poll(cls, context):
+        return context.area is not None and context.region is not None
     
     def invoke(self, context, event):
         scene = context.scene
+        region = context.region
         
-        # Determine which handle is being dragged based on click position
-        in_x = frame_to_region_x(context, scene.frame_start)
-        out_x = frame_to_region_x(context, scene.frame_end)
+        if region.type != 'WINDOW':
+            return {'PASS_THROUGH'}
         
         mouse_x = event.mouse_region_x
         
-        # Check if clicking on in handle (within 20 pixels)
-        if abs(mouse_x - in_x) < 20:
+        # Get handle positions
+        try:
+            in_x = frame_to_region_x(region, scene.frame_start)
+            out_x = frame_to_region_x(region, scene.frame_end)
+        except Exception:
+            return {'PASS_THROUGH'}
+        
+        # Determine which handle to drag (20 pixel threshold)
+        hit_threshold = 20
+        
+        dist_to_in = abs(mouse_x - in_x)
+        dist_to_out = abs(mouse_x - out_x)
+        
+        if dist_to_in < hit_threshold and dist_to_in <= dist_to_out:
             self.handle_type = "in"
             self.initial_frame = scene.frame_start
             state.is_dragging_in = True
-        # Check if clicking on out handle
-        elif abs(mouse_x - out_x) < 20:
+        elif dist_to_out < hit_threshold:
             self.handle_type = "out"
             self.initial_frame = scene.frame_end
             state.is_dragging_out = True
         else:
             return {'PASS_THROUGH'}
         
-        self.initial_mouse_x = mouse_x
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
         
@@ -325,18 +353,21 @@ class TIMELINE_OT_drag_io_handles(bpy.types.Operator):
     
     def modal(self, context, event):
         scene = context.scene
+        region = context.region
         
         if event.type == 'MOUSEMOVE':
-            new_frame = region_x_to_frame(context, event.mouse_region_x)
+            try:
+                new_frame = region_x_to_frame(region, event.mouse_region_x)
+            except Exception:
+                return {'RUNNING_MODAL'}
             
             if self.handle_type == "in":
-                # Ensure in frame doesn't exceed out frame
-                new_frame = min(new_frame, scene.frame_end - 1)
-                new_frame = max(new_frame, 0)
+                # Clamp: in frame can't exceed out frame
+                new_frame = max(0, min(new_frame, scene.frame_end - 1))
                 scene.frame_start = new_frame
             else:
-                # Ensure out frame doesn't go below in frame
-                new_frame = max(new_frame, scene.frame_start + 1)
+                # Clamp: out frame can't go below in frame
+                new_frame = max(scene.frame_start + 1, new_frame)
                 scene.frame_end = new_frame
             
             context.area.tag_redraw()
@@ -349,7 +380,7 @@ class TIMELINE_OT_drag_io_handles(bpy.types.Operator):
             return {'FINISHED'}
         
         elif event.type in {'RIGHTMOUSE', 'ESC'}:
-            # Restore original frame
+            # Cancel: restore original frame
             if self.handle_type == "in":
                 scene.frame_start = self.initial_frame
             else:
@@ -363,65 +394,6 @@ class TIMELINE_OT_drag_io_handles(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
-class TIMELINE_OT_hover_check(bpy.types.Operator):
-    """Check for hover state on handles (runs continuously)"""
-    bl_idname = "timeline.hover_check"
-    bl_label = "Check Handle Hover"
-    bl_options = {'INTERNAL'}
-    
-    _timer = None
-    
-    def modal(self, context, event):
-        if not state.enabled:
-            return {'PASS_THROUGH'}
-        
-        if context.area is None:
-            return {'PASS_THROUGH'}
-        
-        # Only process in animation editors
-        if context.area.type not in {'DOPESHEET_EDITOR', 'GRAPH_EDITOR', 'NLA_EDITOR', 
-                                      'SEQUENCE_EDITOR', 'TIMELINE'}:
-            return {'PASS_THROUGH'}
-        
-        if event.type == 'MOUSEMOVE':
-            scene = context.scene
-            mouse_x = event.mouse_region_x
-            
-            in_x = frame_to_region_x(context, scene.frame_start)
-            out_x = frame_to_region_x(context, scene.frame_end)
-            
-            old_hover_in = state.hover_in
-            old_hover_out = state.hover_out
-            
-            state.hover_in = abs(mouse_x - in_x) < 20
-            state.hover_out = abs(mouse_x - out_x) < 20
-            
-            # Redraw if hover state changed
-            if old_hover_in != state.hover_in or old_hover_out != state.hover_out:
-                context.area.tag_redraw()
-            
-            # Change cursor when hovering
-            if state.hover_in or state.hover_out:
-                context.window.cursor_set('MOVE_X')
-            else:
-                context.window.cursor_set('DEFAULT')
-        
-        elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            if state.hover_in or state.hover_out:
-                bpy.ops.timeline.drag_io_handles('INVOKE_DEFAULT')
-                return {'RUNNING_MODAL'}
-        
-        return {'PASS_THROUGH'}
-    
-    def invoke(self, context, event):
-        context.window_manager.modal_handler_add(self)
-        return {'RUNNING_MODAL'}
-
-
-# -----------------------------------------------------------------------------
-# Toggle Operator
-# -----------------------------------------------------------------------------
-
 class TIMELINE_OT_toggle_io_widgets(bpy.types.Operator):
     """Toggle the In/Out frame widgets visibility"""
     bl_idname = "timeline.toggle_io_widgets"
@@ -431,15 +403,43 @@ class TIMELINE_OT_toggle_io_widgets(bpy.types.Operator):
     def execute(self, context):
         state.enabled = not state.enabled
         
-        # Redraw all animation areas
-        for area in context.screen.areas:
-            if area.type in {'DOPESHEET_EDITOR', 'GRAPH_EDITOR', 'NLA_EDITOR', 
-                            'SEQUENCE_EDITOR', 'TIMELINE'}:
+        # Redraw all areas
+        for window in context.window_manager.windows:
+            for area in window.screen.areas:
                 area.tag_redraw()
         
         status = "enabled" if state.enabled else "disabled"
         self.report({'INFO'}, f"In/Out widgets {status}")
         return {'FINISHED'}
+
+
+# -----------------------------------------------------------------------------
+# Keymap and Event Handler
+# -----------------------------------------------------------------------------
+
+addon_keymaps = []
+
+
+def update_hover_state(region, mouse_x, scene):
+    """Update hover state based on mouse position"""
+    try:
+        in_x = frame_to_region_x(region, scene.frame_start)
+        out_x = frame_to_region_x(region, scene.frame_end)
+    except Exception:
+        return False
+    
+    hit_threshold = 20
+    
+    old_hover_in = state.hover_in
+    old_hover_out = state.hover_out
+    
+    dist_to_in = abs(mouse_x - in_x)
+    dist_to_out = abs(mouse_x - out_x)
+    
+    state.hover_in = dist_to_in < hit_threshold and dist_to_in <= dist_to_out
+    state.hover_out = dist_to_out < hit_threshold and not state.hover_in
+    
+    return old_hover_in != state.hover_in or old_hover_out != state.hover_out
 
 
 # -----------------------------------------------------------------------------
@@ -450,26 +450,24 @@ def draw_menu_item(self, context):
     """Add toggle to View menu"""
     layout = self.layout
     layout.separator()
-    layout.operator(
-        TIMELINE_OT_toggle_io_widgets.bl_idname,
-        text="In/Out Frame Handles",
-        icon='CHECKBOX_HLT' if state.enabled else 'CHECKBOX_DEHLT'
-    )
+    icon = 'CHECKBOX_HLT' if state.enabled else 'CHECKBOX_DEHLT'
+    layout.operator(TIMELINE_OT_toggle_io_widgets.bl_idname, 
+                   text="In/Out Frame Handles", icon=icon)
 
 
 # -----------------------------------------------------------------------------
-# Registration
+# Draw Handler Manager
 # -----------------------------------------------------------------------------
 
-# Editor types and their corresponding space types for draw handlers
-ANIMATION_EDITORS = {
-    'DOPESHEET_EDITOR': 'SpaceDopeSheetEditor',
-    'GRAPH_EDITOR': 'SpaceGraphEditor',
-    'NLA_EDITOR': 'SpaceNLA',
-    'SEQUENCE_EDITOR': 'SpaceSequenceEditor',
-}
+# Space types for animation editors
+ANIMATION_SPACES = [
+    'SpaceDopeSheetEditor',
+    'SpaceGraphEditor', 
+    'SpaceNLA',
+    'SpaceSequenceEditor',
+]
 
-# View menus to add our toggle to
+# View menus for each editor
 VIEW_MENUS = [
     'DOPESHEET_MT_view',
     'GRAPH_MT_view',
@@ -477,9 +475,9 @@ VIEW_MENUS = [
     'SEQUENCER_MT_view',
 ]
 
+
 classes = (
-    TIMELINE_OT_drag_io_handles,
-    TIMELINE_OT_hover_check,
+    TIMELINE_OT_drag_io_handle,
     TIMELINE_OT_toggle_io_widgets,
 )
 
@@ -490,41 +488,52 @@ def register():
         bpy.utils.register_class(cls)
     
     # Add draw handlers for each animation editor
-    for editor_type, space_name in ANIMATION_EDITORS.items():
+    for space_name in ANIMATION_SPACES:
         space_type = getattr(bpy.types, space_name, None)
         if space_type is not None:
             handler = space_type.draw_handler_add(
                 draw_timeline_widgets, (), 'WINDOW', 'POST_PIXEL'
             )
-            state.draw_handlers[editor_type] = (space_type, handler)
+            state.draw_handlers[space_name] = (space_type, handler)
     
-    # Add menu items
+    # Add menu items to View menus
     for menu_name in VIEW_MENUS:
         menu_type = getattr(bpy.types, menu_name, None)
         if menu_type is not None:
             menu_type.append(draw_menu_item)
     
-    # Register keymap for hover detection
-    # This runs the hover check operator when entering animation editors
+    # Setup keymap for dragging handles
     wm = bpy.context.window_manager
-    if wm.keyconfigs.addon:
-        for editor_type in ANIMATION_EDITORS.keys():
-            km = wm.keyconfigs.addon.keymaps.new(name='Window', space_type='EMPTY')
-            kmi = km.keymap_items.new(
-                TIMELINE_OT_hover_check.bl_idname,
-                type='MOUSEMOVE',
-                value='ANY'
-            )
+    kc = wm.keyconfigs.addon
+    if kc:
+        # Add to each animation editor keymap
+        editor_keymaps = [
+            'Dopesheet',
+            'Graph Editor', 
+            'NLA Editor',
+            'Sequencer',
+        ]
+        for km_name in editor_keymaps:
+            try:
+                km = kc.keymaps.new(name=km_name, space_type='EMPTY')
+                kmi = km.keymap_items.new(
+                    TIMELINE_OT_drag_io_handle.bl_idname,
+                    type='LEFTMOUSE',
+                    value='PRESS'
+                )
+                addon_keymaps.append((km, kmi))
+            except Exception:
+                pass
 
 
 def unregister():
-    # Remove draw handlers
-    for editor_type, (space_type, handler) in state.draw_handlers.items():
+    # Remove keymaps
+    for km, kmi in addon_keymaps:
         try:
-            space_type.draw_handler_remove(handler, 'WINDOW')
-        except ValueError:
+            km.keymap_items.remove(kmi)
+        except Exception:
             pass
-    state.draw_handlers.clear()
+    addon_keymaps.clear()
     
     # Remove menu items
     for menu_name in VIEW_MENUS:
@@ -534,6 +543,14 @@ def unregister():
                 menu_type.remove(draw_menu_item)
             except ValueError:
                 pass
+    
+    # Remove draw handlers
+    for space_name, (space_type, handler) in state.draw_handlers.items():
+        try:
+            space_type.draw_handler_remove(handler, 'WINDOW')
+        except ValueError:
+            pass
+    state.draw_handlers.clear()
     
     # Unregister classes
     for cls in reversed(classes):
