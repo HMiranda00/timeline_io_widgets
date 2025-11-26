@@ -423,13 +423,13 @@ class TIMELINE_OT_hover_cursor(bpy.types.Operator):
     bl_label = "IO Handles Hover Check"
     bl_options = {'INTERNAL'}
     
-    def execute(self, context):
+    def invoke(self, context, event):
         if not state.enabled or context.region is None:
             return {'PASS_THROUGH'}
         
-        # Get mouse position from window
-        mouse_x = context.window.mouse_x - context.region.x
-        mouse_y = context.window.mouse_y - context.region.y
+        # Get mouse position from event (relative to region)
+        mouse_x = event.mouse_region_x
+        mouse_y = event.mouse_region_y
         
         # Check if mouse is in our region
         if not (0 <= mouse_x <= context.region.width and 
