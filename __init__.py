@@ -62,8 +62,8 @@ BRACKET_WIDTH = 3        # Bracket thickness
 HEADER_HEIGHT = 18
 
 # Bracket dimensions (positioned just below the header)
-BRACKET_HEIGHT = 14      # Small bracket height
-BRACKET_ARM_LENGTH = 10  # Horizontal arm length
+BRACKET_HEIGHT = 16      # Small bracket height (+15%)
+BRACKET_ARM_LENGTH = 12  # Horizontal arm length (+15%)
 
 # Indicator dot size (small mark over the numbers)
 INDICATOR_SIZE = 4
@@ -310,6 +310,32 @@ def draw_timeline_widgets():
 # Operators
 # -----------------------------------------------------------------------------
 
+# Hit detection threshold for handles
+HANDLE_HIT_THRESHOLD = 25
+
+
+def check_handle_hover(context, mouse_x):
+    """Check if mouse is hovering over a handle and return which one"""
+    if not state.enabled:
+        return None
+    
+    scene = context.scene
+    try:
+        in_x = frame_to_region_x(context, scene.frame_start)
+        out_x = frame_to_region_x(context, scene.frame_end)
+    except Exception:
+        return None
+    
+    dist_in = abs(mouse_x - in_x)
+    dist_out = abs(mouse_x - out_x)
+    
+    if dist_in < HANDLE_HIT_THRESHOLD and dist_in <= dist_out:
+        return "in"
+    elif dist_out < HANDLE_HIT_THRESHOLD:
+        return "out"
+    return None
+
+
 class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
     """Drag the in/out frame handles to adjust frame range"""
     bl_idname = "timeline.drag_io_handle"
@@ -329,27 +355,21 @@ class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
         scene = context.scene
         mouse_x = event.mouse_region_x
         
-        try:
-            in_x = frame_to_region_x(context, scene.frame_start)
-            out_x = frame_to_region_x(context, scene.frame_end)
-        except Exception:
-            return {'PASS_THROUGH'}
+        handle = check_handle_hover(context, mouse_x)
         
-        threshold = 25
-        
-        dist_in = abs(mouse_x - in_x)
-        dist_out = abs(mouse_x - out_x)
-        
-        if dist_in < threshold and dist_in <= dist_out:
+        if handle == "in":
             self.handle_type = "in"
             self.initial_frame = scene.frame_start
             state.is_dragging_in = True
-        elif dist_out < threshold:
+        elif handle == "out":
             self.handle_type = "out"
             self.initial_frame = scene.frame_end
             state.is_dragging_out = True
         else:
             return {'PASS_THROUGH'}
+        
+        # Set cursor to indicate horizontal movement
+        context.window.cursor_modal_set('SCROLL_X')
         
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
@@ -376,6 +396,7 @@ class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
             return {'RUNNING_MODAL'}
         
         elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
+            context.window.cursor_modal_restore()
             state.is_dragging_in = False
             state.is_dragging_out = False
             context.area.tag_redraw()
@@ -387,12 +408,60 @@ class TIMELINE_OT_drag_io_handle(bpy.types.Operator):
             else:
                 scene.frame_end = self.initial_frame
             
+            context.window.cursor_modal_restore()
             state.is_dragging_in = False
             state.is_dragging_out = False
             context.area.tag_redraw()
             return {'CANCELLED'}
         
         return {'RUNNING_MODAL'}
+
+
+class TIMELINE_OT_hover_cursor(bpy.types.Operator):
+    """Update cursor when hovering over handles"""
+    bl_idname = "timeline.hover_cursor"
+    bl_label = "IO Handles Hover Check"
+    bl_options = {'INTERNAL'}
+    
+    def execute(self, context):
+        if not state.enabled or context.region is None:
+            return {'PASS_THROUGH'}
+        
+        # Get mouse position from window
+        mouse_x = context.window.mouse_x - context.region.x
+        mouse_y = context.window.mouse_y - context.region.y
+        
+        # Check if mouse is in our region
+        if not (0 <= mouse_x <= context.region.width and 
+                0 <= mouse_y <= context.region.height):
+            # Reset hover state when outside
+            if state.hover_in or state.hover_out:
+                state.hover_in = False
+                state.hover_out = False
+                context.window.cursor_set('DEFAULT')
+                context.area.tag_redraw()
+            return {'PASS_THROUGH'}
+        
+        handle = check_handle_hover(context, mouse_x)
+        
+        # Update hover state
+        old_hover_in = state.hover_in
+        old_hover_out = state.hover_out
+        
+        state.hover_in = (handle == "in")
+        state.hover_out = (handle == "out")
+        
+        # Change cursor based on hover
+        if handle is not None:
+            context.window.cursor_set('SCROLL_X')
+        else:
+            context.window.cursor_set('DEFAULT')
+        
+        # Redraw if hover state changed
+        if old_hover_in != state.hover_in or old_hover_out != state.hover_out:
+            context.area.tag_redraw()
+        
+        return {'PASS_THROUGH'}
 
 
 class TIMELINE_OT_toggle_io_widgets(bpy.types.Operator):
@@ -443,9 +512,11 @@ VIEW_MENUS = [
 ]
 
 addon_keymaps = []
+hover_operators = {}  # Track hover operators per area
 
 classes = (
     TIMELINE_OT_drag_io_handle,
+    TIMELINE_OT_hover_cursor,
     TIMELINE_OT_toggle_io_widgets,
 )
 
@@ -470,24 +541,40 @@ def register():
     wm = bpy.context.window_manager
     kc = wm.keyconfigs.addon
     if kc:
+        # Dopesheet
         km = kc.keymaps.new(name='Dopesheet', space_type='DOPESHEET_EDITOR')
         kmi = km.keymap_items.new(TIMELINE_OT_drag_io_handle.bl_idname, 
                                    'LEFTMOUSE', 'PRESS')
         addon_keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(TIMELINE_OT_hover_cursor.bl_idname,
+                                   'MOUSEMOVE', 'ANY')
+        addon_keymaps.append((km, kmi))
         
+        # Graph Editor
         km = kc.keymaps.new(name='Graph Editor', space_type='GRAPH_EDITOR')
         kmi = km.keymap_items.new(TIMELINE_OT_drag_io_handle.bl_idname,
                                    'LEFTMOUSE', 'PRESS')
         addon_keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(TIMELINE_OT_hover_cursor.bl_idname,
+                                   'MOUSEMOVE', 'ANY')
+        addon_keymaps.append((km, kmi))
         
+        # NLA Editor
         km = kc.keymaps.new(name='NLA Editor', space_type='NLA_EDITOR')
         kmi = km.keymap_items.new(TIMELINE_OT_drag_io_handle.bl_idname,
                                    'LEFTMOUSE', 'PRESS')
         addon_keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(TIMELINE_OT_hover_cursor.bl_idname,
+                                   'MOUSEMOVE', 'ANY')
+        addon_keymaps.append((km, kmi))
         
+        # Sequencer
         km = kc.keymaps.new(name='Sequencer', space_type='SEQUENCE_EDITOR')
         kmi = km.keymap_items.new(TIMELINE_OT_drag_io_handle.bl_idname,
                                    'LEFTMOUSE', 'PRESS')
+        addon_keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(TIMELINE_OT_hover_cursor.bl_idname,
+                                   'MOUSEMOVE', 'ANY')
         addon_keymaps.append((km, kmi))
 
 
