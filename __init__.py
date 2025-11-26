@@ -54,15 +54,19 @@ def region_x_to_frame(context, x):
 # Drawing Configuration
 # -----------------------------------------------------------------------------
 
-# Line thickness
-LINE_WIDTH = 2
+# Thickness settings
+LINE_WIDTH = 1           # Thin vertical lines
+BRACKET_WIDTH = 3        # Bracket thickness
 
 # Height of the timeline header (where frame numbers are displayed)
-HEADER_HEIGHT = 22
+HEADER_HEIGHT = 18
 
-# Bracket dimensions
-BRACKET_HEIGHT = 45
-BRACKET_ARM_LENGTH = 12
+# Bracket dimensions (positioned just below the header)
+BRACKET_HEIGHT = 14      # Small bracket height
+BRACKET_ARM_LENGTH = 10  # Horizontal arm length
+
+# Indicator dot size (small mark over the numbers)
+INDICATOR_SIZE = 4
 
 
 # -----------------------------------------------------------------------------
@@ -86,94 +90,96 @@ def draw_rect(shader, x, y, width, height, color):
 def draw_handle(shader, x, region_height, color, is_in_handle=True):
     """
     Draw a complete handle with:
-    - Short indicator line in the header (over the numbers)
-    - Main vertical line below the header
-    - Bracket shape at bottom
+    - Small indicator dot in the header (over the numbers)
+    - Thin vertical line from header to brackets
+    - Bracket shape just below the header
     """
     line_w = LINE_WIDTH
-    half_w = line_w / 2
+    bracket_w = BRACKET_WIDTH
+    half_line = line_w / 2
+    half_bracket = bracket_w / 2
     
     # Area boundaries
-    header_top = region_height
     header_bottom = region_height - HEADER_HEIGHT
-    content_bottom = 0
+    bracket_top = header_bottom
+    bracket_bottom = header_bottom - BRACKET_HEIGHT
     
-    # 1. Draw short indicator line in header area (over the numbers)
-    indicator_height = HEADER_HEIGHT - 4  # Slight padding from edges
+    # 1. Draw small indicator dot in header area (over the numbers)
+    indicator_y = region_height - INDICATOR_SIZE - 2  # Near top of header
     draw_rect(shader, 
-              x - half_w, 
-              header_bottom + 2,  # 2px padding from bottom of header
+              x - half_line, 
+              indicator_y,
               line_w, 
-              indicator_height, 
+              INDICATOR_SIZE, 
               color)
     
-    # 2. Draw main vertical line (from header bottom to bracket top)
-    main_line_top = header_bottom
-    main_line_bottom = BRACKET_HEIGHT
+    # 2. Draw thin vertical line (from below header to bottom of view)
     draw_rect(shader,
-              x - half_w,
-              main_line_bottom,
+              x - half_line,
+              0,
               line_w,
-              main_line_top - main_line_bottom,
+              bracket_bottom,
               color)
     
-    # 3. Draw bracket at bottom
+    # 3. Draw bracket just below header
     if is_in_handle:
         # "[" shape - vertical bar + arms extending right
         # Vertical bar of bracket
-        draw_rect(shader, x - half_w, content_bottom, line_w, BRACKET_HEIGHT, color)
+        draw_rect(shader, x - half_bracket, bracket_bottom, bracket_w, BRACKET_HEIGHT, color)
         
         # Top arm (horizontal, extending right)
         draw_rect(shader, 
-                  x - half_w, 
-                  BRACKET_HEIGHT - line_w, 
+                  x - half_bracket, 
+                  bracket_top - bracket_w, 
                   BRACKET_ARM_LENGTH, 
-                  line_w, 
+                  bracket_w, 
                   color)
         
         # Bottom arm (horizontal, extending right)
         draw_rect(shader, 
-                  x - half_w, 
-                  content_bottom, 
+                  x - half_bracket, 
+                  bracket_bottom, 
                   BRACKET_ARM_LENGTH, 
-                  line_w, 
+                  bracket_w, 
                   color)
     else:
         # "]" shape - vertical bar + arms extending left
         # Vertical bar of bracket
-        draw_rect(shader, x - half_w, content_bottom, line_w, BRACKET_HEIGHT, color)
+        draw_rect(shader, x - half_bracket, bracket_bottom, bracket_w, BRACKET_HEIGHT, color)
         
         # Top arm (horizontal, extending left)
         draw_rect(shader, 
-                  x - BRACKET_ARM_LENGTH + half_w, 
-                  BRACKET_HEIGHT - line_w, 
+                  x - BRACKET_ARM_LENGTH + half_bracket, 
+                  bracket_top - bracket_w, 
                   BRACKET_ARM_LENGTH, 
-                  line_w, 
+                  bracket_w, 
                   color)
         
         # Bottom arm (horizontal, extending left)
         draw_rect(shader, 
-                  x - BRACKET_ARM_LENGTH + half_w, 
-                  content_bottom, 
+                  x - BRACKET_ARM_LENGTH + half_bracket, 
+                  bracket_bottom, 
                   BRACKET_ARM_LENGTH, 
-                  line_w, 
+                  bracket_w, 
                   color)
 
 
 def draw_range_overlay(shader, in_x, out_x, region_height, color):
-    """Draw the highlighted range area between the brackets"""
+    """Draw the highlighted range area between the brackets (just below header)"""
     if in_x >= out_x:
         return
     
-    # Only draw in the content area (below header, within bracket height)
-    overlay_bottom = LINE_WIDTH  # Slight offset from bracket bottom
-    overlay_top = BRACKET_HEIGHT - LINE_WIDTH  # Up to bracket top arm
+    header_bottom = region_height - HEADER_HEIGHT
+    bracket_top = header_bottom
+    bracket_bottom = header_bottom - BRACKET_HEIGHT
     
+    # Draw overlay inside the bracket area
+    overlay_padding = BRACKET_WIDTH
     draw_rect(shader, 
-              in_x + LINE_WIDTH,  # Offset to be inside the bracket
-              overlay_bottom, 
-              out_x - in_x - LINE_WIDTH * 2,  # Width between brackets
-              overlay_top - overlay_bottom, 
+              in_x + overlay_padding,
+              bracket_bottom + overlay_padding, 
+              out_x - in_x - overlay_padding * 2,
+              BRACKET_HEIGHT - overlay_padding * 2, 
               color)
 
 
@@ -284,18 +290,20 @@ def draw_timeline_widgets():
     
     gpu.state.blend_set('NONE')
     
-    # Draw labels when hovering or dragging
+    # Draw labels when hovering or dragging (below the brackets)
+    label_y = height - HEADER_HEIGHT - BRACKET_HEIGHT - 18
+    
     if state.hover_in or state.is_dragging_in:
-        label_x = in_x + 10
-        draw_label(label_x, height - HEADER_HEIGHT - 20, f"IN: {scene.frame_start}")
+        label_x = in_x + 8
+        draw_label(label_x, label_y, f"IN: {scene.frame_start}")
     
     if state.hover_out or state.is_dragging_out:
         import blf
         text = f"OUT: {scene.frame_end}"
         blf.size(0, 11)
         text_w, _ = blf.dimensions(0, text)
-        label_x = out_x - text_w - 10
-        draw_label(label_x, height - HEADER_HEIGHT - 20, text)
+        label_x = out_x - text_w - 8
+        draw_label(label_x, label_y, text)
 
 
 # -----------------------------------------------------------------------------
