@@ -1,0 +1,20 @@
+schema_version = "1.0.0"
+
+id = "timeline_io_widgets"
+version = "1.0.0"
+name = "Timeline In/Out Widgets"
+tagline = "Add in/out frame controls to all animation editors"
+maintainer = "Timeline IO Widgets Contributors"
+type = "add-on"
+
+blender_version_min = "5.0.0"
+
+# Tags for extension discovery
+tags = ["Animation", "Sequencer", "User Interface"]
+
+# License
+license = ["SPDX:GPL-3.0-or-later"]
+
+# Optional: website and documentation
+# website = "https://github.com/user/timeline_io_widgets"
+
